@@ -179,9 +179,19 @@ class SSADestroyer:
         """
         Get the base name of a variable (without SSA suffix)
         """
+        # Special case for loop counter variables
+        if ":__rep_counter_" in var_name:
+            # Extract the counter number but keep it as part of the base name
+            # E.g., ":__rep_counter_1_2" should become ":__rep_counter_1"
+            match = re.match(r'(:__rep_counter_\d+)(_\d+)?$', var_name)
+            if match:
+                return match.group(1)  # Return with counter number intact
+        
+        # Regular SSA variables
         match = re.match(r'(.+)_\d+$', var_name)
         if match:
             return match.group(1)
+        
         return var_name
     
     def _collect_phi_functions(self):

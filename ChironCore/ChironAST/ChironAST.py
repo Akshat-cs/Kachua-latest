@@ -30,8 +30,8 @@ class PhiInstruction(Instruction):
     def __str__(self):
         sources = []
         for var, block in zip(self.source_vars, self.source_blocks):
-            sources.append(f"{var.__str__()}@{block.name}")
-        return f"{self.target_var.__str__()} = phi({', '.join(sources)})"
+            sources.append(f"{var.__str__()}")
+        return f"{self.target_var.__str__()} = φ({', '.join(sources)})"
 
 class ConditionCommand(Instruction):
     def __init__(self, condition):

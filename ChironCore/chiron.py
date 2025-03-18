@@ -7,6 +7,7 @@ from ChironAST.builder import astGenPass
 import abstractInterpretation as AI
 import dataFlowAnalysis as DFA
 from sbfl import testsuiteGenerator
+import ChironAST.ChironAST as ChironAST
 
 sys.path.insert(0, "../Submission/")
 sys.path.insert(0, "ChironAST/")
@@ -29,14 +30,134 @@ import csv
 from SSAConverter import SSAConverter
 from SSADestroyer import SSADestroyer
 
-
 def cleanup():
     pass
-
 
 def stopTurtle():
     turtle.bye()
 
+def cfg_to_ir(cfg):
+    """
+    Convert a CFG to IR preserving the original program structure,
+    with phi functions correctly placed before their uses.
+    """
+    # First pass: collect all non-phi instructions with their original line numbers
+    regular_instrs = {}
+    phi_instrs = []
+    
+    for block in cfg.nodes():
+        if hasattr(block, 'instrlist'):
+            for instr, line_num in block.instrlist:
+                if isinstance(instr, ChironAST.PhiInstruction):
+                    phi_instrs.append((instr, line_num))
+                else:
+                    regular_instrs[line_num] = (instr, 1)  # Default PC increment
+    
+    # Find the merge block with phi functions
+    merge_block = None
+    for block in cfg.nodes():
+        if hasattr(block, 'instrlist') and cfg.in_degree(block) > 1:
+            has_phi = any(isinstance(instr, ChironAST.PhiInstruction) for instr, _ in block.instrlist)
+            if has_phi:
+                merge_block = block
+                break
+    
+    # Find the first non-phi instruction in the merge block
+    first_non_phi_line = float('inf')
+    if merge_block:
+        for instr, line_num in merge_block.instrlist:
+            if not isinstance(instr, ChironAST.PhiInstruction) and line_num < first_non_phi_line:
+                first_non_phi_line = line_num
+    
+    # Place phi instructions just before the first non-phi instruction in the merge block
+    if phi_instrs and first_non_phi_line < float('inf'):
+        # Shift regular instructions to make room for phi functions
+        shifted_instrs = {}
+        phi_count = len(phi_instrs)
+        
+        # Move instructions after the insertion point
+        for line, instr_tuple in sorted(regular_instrs.items()):
+            if line >= first_non_phi_line:
+                shifted_instrs[line + phi_count] = instr_tuple
+            else:
+                shifted_instrs[line] = instr_tuple
+        
+        # Insert phi functions
+        for i, (phi, _) in enumerate(sorted(phi_instrs, key=lambda x: str(x[0]))):  # Sort by variable name
+            shifted_instrs[first_non_phi_line + i] = (phi, 1)
+        
+        regular_instrs = shifted_instrs
+    
+    # Construct the IR in line number order
+    ir = []
+    for i in range(max(regular_instrs.keys()) + 1):
+        if i in regular_instrs:
+            ir.append(regular_instrs[i])
+    
+    # Fix jump offsets for conditional instructions
+    for i, (instr, _) in enumerate(ir):
+        if isinstance(instr, ChironAST.ConditionCommand):
+            if not isinstance(instr.cond, ChironAST.BoolFalse):
+                # For a condition check, find where the false branch would start
+                # Usually this is right after the "False" jump that ends the true branch
+                for j in range(i+1, len(ir)):
+                    if isinstance(ir[j][0], ChironAST.ConditionCommand) and isinstance(ir[j][0].cond, ChironAST.BoolFalse):
+                        # Jump to the instruction after this False
+                        ir[i] = (instr, j - i + 1)
+                        break
+            else:
+                # For a "False" jump, it should jump to the phi functions or merge point
+                # Find the first phi function
+                for j in range(len(ir)):
+                    if isinstance(ir[j][0], ChironAST.PhiInstruction):
+                        # Jump to this phi
+                        ir[i] = (instr, j - i)
+                        break
+    
+    return ir
+
+def collect_vars_from_expr(expr, var_set):
+    """
+    Recursively collect variable names from an expression.
+    
+    Args:
+        expr: The expression to analyze
+        var_set: Set to add variable names to
+    """
+    if isinstance(expr, ChironAST.Var):
+        var_set.add(expr.varname)
+    elif hasattr(expr, 'lexpr') and hasattr(expr, 'rexpr'):
+        collect_vars_from_expr(expr.lexpr, var_set)
+        collect_vars_from_expr(expr.rexpr, var_set)
+    elif hasattr(expr, 'expr'):
+        collect_vars_from_expr(expr.expr, var_set)
+
+def collect_all_variables(ir):
+    """
+    Collect all variable names from an IR.
+    """
+    variables = set()
+    
+    for instr, _ in ir:
+        # Check variable uses
+        if hasattr(instr, 'rexpr'):
+            collect_vars_from_expr(instr.rexpr, variables)
+        
+        if hasattr(instr, 'cond'):
+            collect_vars_from_expr(instr.cond, variables)
+            
+        if hasattr(instr, 'expr'):
+            collect_vars_from_expr(instr.expr, variables)
+            
+        if hasattr(instr, 'xcor') and hasattr(instr, 'ycor'):
+            collect_vars_from_expr(instr.xcor, variables)
+            collect_vars_from_expr(instr.ycor, variables)
+        
+        # Check variable definitions
+        if hasattr(instr, 'lvar') and isinstance(instr.lvar, ChironAST.Var):
+            variables.add(instr.lvar.varname)
+    
+    return variables
 
 if __name__ == "__main__":
     print(Release)
@@ -228,7 +349,7 @@ if __name__ == "__main__":
 
     # generate control_flow_graph from IR statements.
     if args.control_flow:
-        cfg = cfgB.buildCFG(ir, "control_flow_graph", True)
+        cfg = cfgB.buildCFG(ir, "control_flow_graph", False)
         irHandler.setCFG(cfg)
 
     else:
@@ -236,7 +357,7 @@ if __name__ == "__main__":
 
     if args.dump_cfg:
         # Added below 2 lines
-        cfg = cfgB.buildCFG(ir, "control_flow_graph", True)
+        cfg = cfgB.buildCFG(ir, "control_flow_graph", False)
         irHandler.setCFG(cfg)
         cfgB.dumpCFG(cfg, "control_flow_graph")
         # set the cfg of the program.
@@ -258,7 +379,13 @@ if __name__ == "__main__":
         irHandler.dumpIR("optimized.kw", irHandler.ir)
 
     if args.static_single_assignment:
-        print("== Converting to SSA Form ==")
+        print("\n========== ORIGINAL IR BEFORE SSA ==========\n")
+        irHandler.pretty_print(irHandler.ir)
+
+        # Store the original IR for later reference
+        original_ir = list(irHandler.ir)  # Make a copy
+
+        print("\n===== Converting to SSA Form =====")
         if not irHandler.cfg:
             # Generate CFG if not already generated
             cfg = cfgB.buildCFG(ir, "control_flow_graph", False)
@@ -266,20 +393,36 @@ if __name__ == "__main__":
         
         # Convert to SSA form
         ssa_converter = SSAConverter(irHandler.cfg)
-        # Add this debug call
-        # ssa_converter.print_dominance_info()
         ssa_cfg = ssa_converter.convert_to_ssa()
         irHandler.setCFG(ssa_cfg)
+        
+        # Convert CFG to IR and update the IR handler
+        ssa_ir = cfg_to_ir(ssa_cfg)
+        irHandler.setIR(ssa_ir)
+        
+        # Print SSA IR
+        print("\n========== IR AFTER SSA CONVERSION ==========\n")
+        irHandler.pretty_print(irHandler.ir)
         
         if args.dump_cfg:
             cfgB.dumpCFG(ssa_cfg, "ssa_form_cfg")
             print("SSA form CFG dumped to ssa_form_cfg.png")
         
-        print("== Converting back from SSA Form ==")
+        print("\n===== Converting back from SSA Form =====")
         # Convert back from SSA form
         ssa_destroyer = SSADestroyer(irHandler.cfg)
         normal_cfg = ssa_destroyer.convert_from_ssa()
         irHandler.setCFG(normal_cfg)
+        
+        # Convert CFG to IR and update the IR handler
+        post_ssa_ir = cfg_to_ir(normal_cfg)
+        
+        # Update IR
+        irHandler.setIR(post_ssa_ir)
+        
+        # Print post-SSA IR
+        print("\n========== IR AFTER SSA DESTRUCTION ==========\n")
+        irHandler.pretty_print(irHandler.ir)
         
         if args.dump_cfg:
             cfgB.dumpCFG(normal_cfg, "post_ssa_cfg")
