@@ -77,8 +77,8 @@ class SSAConverter:
                 # Check for variable uses
                 self._collect_variables_from_instruction(instr)
         
-        # Initialize version counters for all variables
-        # Start at 1 for specifically ordered variables
+        # Initialize version counters for all variables to start at 0
+        # This ensures the first increment gives version 1
         self.variable_versions = {var: 0 for var in self.all_variables}
         
         print(f"Found {len(self.all_variables)} variables:")
@@ -276,6 +276,10 @@ class SSAConverter:
         
         # Place phi functions at merge points
         for block, vars_needing_phi in merge_points.items():
+            # Skip if this block isn't really a merge point (needs multiple predecessors)
+            if len(list(self.cfg.predecessors(block))) <= 1:
+                continue
+                
             # Sort variables for consistent ordering
             vars_needing_phi.sort()
             
@@ -308,22 +312,23 @@ class SSAConverter:
             # Completely rebuild the instruction list with new line numbers
             new_instrlist = []
             
+            # Find appropriate base line number
+            if block.name.isdigit():
+                base_line = int(block.name)
+            elif orig_instrs:
+                # Find the minimum line number in the block's original instructions
+                base_line = min(line_num for _, line_num in orig_instrs)
+            else:
+                # Last resort - find the max line number among predecessors and add 1
+                max_pred_line = 0
+                for pred in self.cfg.predecessors(block):
+                    for _, pred_line_num in pred.instrlist:
+                        max_pred_line = max(max_pred_line, pred_line_num)
+                base_line = max_pred_line + 1
+            
             # First add all phi instructions
             for i, phi_instr in enumerate(phi_instrs):
-                # Use the base line number of the block if available, otherwise use block name as integer
-                if block.name.isdigit():
-                    base_line = int(block.name)
-                elif orig_instrs:
-                    base_line = orig_instrs[0][1]
-                else:
-                    # Last resort - find the max line number among predecessors and add 1
-                    max_pred_line = 0
-                    for pred in self.cfg.predecessors(block):
-                        for _, pred_line_num in pred.instrlist:
-                            max_pred_line = max(max_pred_line, pred_line_num)
-                    base_line = max_pred_line + 1
-                
-                # Add phi instruction with line number equal to base_line
+                # Add phi instruction
                 new_instrlist.append((phi_instr, base_line + i))
             
             # Then add all original non-phi instructions with adjusted line numbers
@@ -333,6 +338,21 @@ class SSAConverter:
             
             # Replace the block's instruction list
             block.instrlist = new_instrlist
+            
+            # If this is a block with no original instructions (like an END block),
+            # make sure phi functions get proper line numbers
+            if not orig_instrs:
+                # Find the maximum line number from all predecessors
+                max_line = 0
+                for pred in self.cfg.predecessors(block):
+                    for _, line_num in pred.instrlist:
+                        max_line = max(max_line, line_num)
+                
+                # If we found a max line number, use that + 1 as the starting point
+                if max_line > 0:
+                    # Adjust all phi instruction line numbers
+                    for i, (phi_instr, _) in enumerate(block.instrlist):
+                        block.instrlist[i] = (phi_instr, max_line + 1 + i)
         
         phi_count = sum(len(vars) for vars in merge_points.values())
         print(f"Total phi functions placed: {phi_count}")
@@ -341,7 +361,7 @@ class SSAConverter:
         """
         Rename variables to their SSA versions:
         1. Initialize stacks for each variable
-        2. Process blocks in a non-recursive depth-first traversal
+        2. Process blocks in a dominance tree order traversal
         3. Update variable uses and definitions
         """
         print("\n===== RENAMING VARIABLES =====")
@@ -365,47 +385,28 @@ class SSAConverter:
     
     def _rename_variables_in_subtree(self, block):
         """
-        Rename variables in a subtree, with special handling for rep_counter variables.
+        Rename variables in a subtree, using consistent version numbering.
         """
         if not hasattr(block, 'instrlist'):
             return
-            
+                
         print(f"Renaming variables in block: {block.name}")
-        
+
         # Save old variable stacks to restore later
         old_stacks = {var: list(stack) for var, stack in self.variable_stacks.items()}
-        
+
         # Process all instructions in the block
         for i, (instr, _) in enumerate(block.instrlist):
             # For phi functions
             if isinstance(instr, ChironAST.PhiInstruction):
                 var_name = self._get_base_name(instr.target_var.varname)
                 
-                # Special handling for rep_counter variables
-                if ":__rep_counter_" in var_name:
-                    # Extract the counter number
-                    counter_num = var_name.split("_")[3]
-                    
-                    # Increment version count but keep it separate
-                    self.variable_versions[var_name] += 1
-                    new_version = self.variable_versions[var_name]
-                    
-                    # Create SSA name with counter preserved
-                    new_name = f"{var_name}_{new_version}"
-                else:
-                    # Regular phi function handling
-                    # Special handling for specific variables to match desired output
-                    if var_name == ":x":
-                        new_version = 4 
-                    elif var_name == ":y":
-                        new_version = 3
-                    else:
-                        # For other variables, increment normally
-                        self.variable_versions[var_name] += 1
-                        new_version = self.variable_versions[var_name]
-                    
-                    # Create the SSA name
-                    new_name = f"{var_name}_{new_version}"
+                # Increment version count 
+                self.variable_versions[var_name] += 1
+                new_version = self.variable_versions[var_name]
+                
+                # Create SSA name
+                new_name = f"{var_name}_{new_version}"
                 
                 # Update the target variable
                 instr.target_var.varname = new_name
@@ -419,46 +420,16 @@ class SSAConverter:
             elif hasattr(instr, 'lvar') and isinstance(instr.lvar, ChironAST.Var):
                 var_name = self._get_base_name(instr.lvar.varname)
                 
-                # Special handling for rep_counter variables
-                if ":__rep_counter_" in var_name:
-                    # Extract the counter number
-                    counter_num = var_name.split("_")[3]
-                    
-                    # Increment version count but keep it separate
-                    self.variable_versions[var_name] += 1
-                    new_version = self.variable_versions[var_name]
-                    
-                    # Create SSA name with counter preserved
-                    new_name = f"{var_name}_{new_version}"
-                else:
-                    # Special handling for specific variables
-                    if var_name == ":x":
-                        # For x in the true branch, use version 2
-                        # For x in the false branch, use version 3
-                        # This requires checking the block's position
-                        if block.name in ["4", "5", "6", "7"]:  # True branch
-                            new_version = 2
-                        elif block.name in ["8", "9"]:  # False branch
-                            new_version = 3
-                        else:
-                            # Default behavior
-                            self.variable_versions[var_name] += 1
-                            new_version = self.variable_versions[var_name]
-                    elif var_name == ":y":
-                        # For y in the true branch, use version 2
-                        if block.name in ["4", "5", "6", "7"]:  # True branch
-                            new_version = 2
-                        else:
-                            # Default behavior
-                            self.variable_versions[var_name] += 1
-                            new_version = self.variable_versions[var_name]
-                    else:
-                        # Default behavior for other variables
-                        self.variable_versions[var_name] += 1
-                        new_version = self.variable_versions[var_name]
-                    
-                    # Create the SSA name
-                    new_name = f"{var_name}_{new_version}"
+                # Process uses in expressions BEFORE renaming the definition
+                if hasattr(instr, 'rexpr'):
+                    self._rename_uses_in_expression(instr.rexpr)
+                
+                # Now handle the variable definition
+                self.variable_versions[var_name] += 1
+                new_version = self.variable_versions[var_name]
+                
+                # Create the SSA name
+                new_name = f"{var_name}_{new_version}"
                 
                 # Update the variable
                 instr.lvar.varname = new_name
@@ -468,9 +439,10 @@ class SSAConverter:
                 
                 print(f"  Renamed definition: {var_name} -> {new_name}")
             
-            # Process uses in all instructions
-            self._rename_uses_in_instruction(instr)
-        
+            # For all other instructions without definitions, process all uses
+            else:
+                self._rename_uses_in_instruction(instr)
+
         # Process successor phi functions
         for succ in self.cfg.successors(block):
             # Update phi functions in this successor
@@ -487,23 +459,14 @@ class SSAConverter:
                                 current_version = self.variable_stacks[var_name][-1]
                                 instr.source_vars[i].varname = current_version
                                 print(f"  Updated phi source in {succ.name}: {var_name} -> {current_version}")
-                            else:
-                                # If there's no current version, use version 1 or use appropriate counter
-                                if ":__rep_counter_" in var_name:
-                                    # For rep_counter, keep the counter number
-                                    counter_num = var_name.split("_")[3]
-                                    new_name = f"{var_name}_1"
-                                else:
-                                    # Regular variable
-                                    new_name = f"{var_name}_1"
-                                
-                                instr.source_vars[i].varname = new_name
-                                print(f"  Updated phi source in {succ.name} with initialized value: {var_name} -> {new_name}")
-        
-        # Recursively process all children in the dominator tree
-        for child in self.dominator_tree.get(block, set()):
+
+        # Process children in dominator tree in a consistent order
+        # Sort the children to ensure consistent processing
+        sorted_children = sorted(self.dominator_tree.get(block, set()), key=lambda x: x.name)
+        for child in sorted_children:
+            print(f"  Processing child block: {child.name}")
             self._rename_variables_in_subtree(child)
-        
+
         # Restore variable stacks to their state before processing this block
         self.variable_stacks = old_stacks
     
@@ -538,11 +501,13 @@ class SSAConverter:
             # Get the current version from the stack
             if var_name in self.variable_stacks and self.variable_stacks[var_name]:
                 current_version = self.variable_stacks[var_name][-1]
+                # Important: update the variable name with the current version
                 expr.varname = current_version
                 print(f"  Renamed use: {var_name} -> {current_version}")
             else:
-                # Initialize with version 0 for undefined variables
-                new_name = f"{var_name}_0"
+                # Initialize with version 1 for undefined variables
+                new_name = f"{var_name}_1"
+                # Important: update the variable name
                 expr.varname = new_name
                 self.variable_stacks[var_name].append(new_name)
                 print(f"  Initialized undefined variable: {var_name} -> {new_name}")
