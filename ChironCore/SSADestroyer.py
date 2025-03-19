@@ -256,13 +256,28 @@ class SSADestroyer:
     
     def _remove_phi_functions(self):
         """
-        Remove all phi functions from the CFG
+        Remove all phi functions from the CFG while preserving jump offsets
         """
         phi_count = len(self.phi_functions)
+        
+        # First, collect information about jump offsets
+        jump_offsets = {}
+        for block in self.cfg.nodes():
+            if hasattr(block, 'instrlist'):
+                for i, (instr, pc) in enumerate(block.instrlist):
+                    if isinstance(instr, ChironAST.ConditionCommand):
+                        jump_offsets[(block, i)] = pc
         
         # Remove phi functions in reverse order to maintain valid indices
         for block, idx, _ in sorted(self.phi_functions, key=lambda x: (x[0].name, x[1]), reverse=True):
             del block.instrlist[idx]
+        
+        # Restore jump offsets
+        for (block, idx), offset in jump_offsets.items():
+            if idx < len(block.instrlist):
+                instr, _ = block.instrlist[idx]
+                if isinstance(instr, ChironAST.ConditionCommand):
+                    block.instrlist[idx] = (instr, offset)
         
         return phi_count
     

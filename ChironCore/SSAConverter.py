@@ -236,8 +236,8 @@ class SSAConverter:
     
     def _place_phi_functions(self):
         """
-        Place phi functions at merge points with line numbers that reflect
-        their natural position in the control flow.
+        Place phi functions at merge points with proper line numbers that
+        ensure correct ordering in the control flow.
         """
         print("\n===== PLACING PHI FUNCTIONS =====")
         
@@ -274,28 +274,14 @@ class SSAConverter:
                             self.variable_defs[var_name].add(df_block)
                             worklist.append(df_block)
         
-        # Find natural places to insert phi functions
+        # Place phi functions at merge points
         for block, vars_needing_phi in merge_points.items():
             # Sort variables for consistent ordering
             vars_needing_phi.sort()
             
-            # Find any conditional blocks that would feed into this merge point
-            cond_blocks = []
-            for pred in self.cfg.predecessors(block):
-                for instr, _ in pred.instrlist:
-                    if isinstance(instr, ChironAST.ConditionCommand):
-                        cond_blocks.append(pred)
-                        break
-            
-            # If this is a merge after an if-else, find the highest line number in the branches
-            max_line = 0
-            for pred in self.cfg.predecessors(block):
-                for _, line_num in pred.instrlist:
-                    if isinstance(line_num, int):
-                        max_line = max(max_line, line_num)
-            
-            # Place phi functions right after the highest line number in predecessors
-            for i, var_name in enumerate(vars_needing_phi):
+            # Create phi instructions to add to the beginning of the block
+            phi_instrs = []
+            for var_name in vars_needing_phi:
                 print(f"  Placing phi function for {var_name} in block {block.name}")
                 
                 # Create the phi function
@@ -310,12 +296,43 @@ class SSAConverter:
                 
                 # Create the phi instruction
                 phi = ChironAST.PhiInstruction(target_var, source_vars, source_blocks)
+                phi_instrs.append(phi)
+            
+            # Store original non-phi instructions
+            orig_instrs = [(instr, line_num) for instr, line_num in block.instrlist 
+                        if not isinstance(instr, ChironAST.PhiInstruction)]
+            
+            # Sort original instructions by line number
+            orig_instrs.sort(key=lambda x: x[1])
+            
+            # Completely rebuild the instruction list with new line numbers
+            new_instrlist = []
+            
+            # First add all phi instructions
+            for i, phi_instr in enumerate(phi_instrs):
+                # Use the base line number of the block if available, otherwise use block name as integer
+                if block.name.isdigit():
+                    base_line = int(block.name)
+                elif orig_instrs:
+                    base_line = orig_instrs[0][1]
+                else:
+                    # Last resort - find the max line number among predecessors and add 1
+                    max_pred_line = 0
+                    for pred in self.cfg.predecessors(block):
+                        for _, pred_line_num in pred.instrlist:
+                            max_pred_line = max(max_pred_line, pred_line_num)
+                    base_line = max_pred_line + 1
                 
-                # Line number should be right after the branches
-                line_num = max_line + 1 + i
-                
-                # Insert at the beginning of the block
-                block.instrlist.insert(0, (phi, line_num))
+                # Add phi instruction with line number equal to base_line
+                new_instrlist.append((phi_instr, base_line + i))
+            
+            # Then add all original non-phi instructions with adjusted line numbers
+            start_line = base_line + len(phi_instrs)
+            for i, (instr, _) in enumerate(orig_instrs):
+                new_instrlist.append((instr, start_line + i))
+            
+            # Replace the block's instruction list
+            block.instrlist = new_instrlist
         
         phi_count = sum(len(vars) for vars in merge_points.values())
         print(f"Total phi functions placed: {phi_count}")
