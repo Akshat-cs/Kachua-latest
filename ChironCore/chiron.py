@@ -38,67 +38,110 @@ def stopTurtle():
 
 def cfg_to_ir(cfg):
     """
-    Convert a CFG to IR preserving the original program structure,
-    with phi functions correctly placed at merge points.
+    Convert a CFG to IR with correctly calculated jump offsets
+    based on the control flow structure.
     """
-    # First, collect all instructions with their line numbers
-    all_instrs = {}
-    phi_instrs = []
+    # Step 1: Collect all basic blocks and their instructions
+    block_instructions = {}
+    block_line_numbers = {}
     
     for block in cfg.nodes():
-        if hasattr(block, 'instrlist'):
-            for instr, line_num in block.instrlist:
-                if isinstance(instr, ChironAST.PhiInstruction):
-                    # Store phi instructions separately
-                    phi_instrs.append((instr, line_num))
-                else:
-                    # Store regular instructions with their line numbers
-                    all_instrs[line_num] = (instr, 1)  # Default PC increment
-    
-    # Sort instructions by line number
-    sorted_lines = sorted(all_instrs.keys())
-    
-    # Find the merge block and its line number
-    merge_block = None
-    merge_line = None
-    for block in cfg.nodes():
-        if hasattr(block, 'instrlist') and cfg.in_degree(block) > 1:
-            # This is a merge point - find the first line number in this block
-            if block.instrlist:
-                min_line = min(line_num for _, line_num in block.instrlist)
-                if merge_line is None or min_line < merge_line:
-                    merge_block = block
-                    merge_line = min_line
-    
-    # If we have phi instructions and found a merge point
-    if phi_instrs and merge_line is not None:
-        # Find the next available line number after all regular instructions
-        max_line = max(sorted_lines) if sorted_lines else 0
-        phi_line = max_line + 1
+        if not hasattr(block, 'instrlist') or not block.instrlist:
+            continue
+            
+        block_instructions[block] = block.instrlist
         
-        # Add all phi instructions with consecutive line numbers
-        for i, (phi, _) in enumerate(sorted(phi_instrs, key=lambda x: str(x[0]))):
-            all_instrs[phi_line + i] = (phi, 1)
+        # Store the lowest line number in this block for sorting
+        min_line = min(line_num for _, line_num in block.instrlist)
+        block_line_numbers[block] = min_line
     
-    # Construct the final IR in order of line numbers
+    # Step 2: Build a deterministic block order based on line numbers
+    ordered_blocks = sorted(block_instructions.keys(), key=lambda b: block_line_numbers[b])
+    
+    # Step 3: Map each block to its successor blocks
+    block_successors = {}
+    block_predecessors = {}
+    for block in ordered_blocks:
+        successors = {}
+        for succ in cfg.successors(block):
+            edge_label = cfg.get_edge_label(block, succ)
+            successors[edge_label] = succ
+        block_successors[block] = successors
+        
+        # Track predecessors
+        for pred in cfg.predecessors(block):
+            if block not in block_predecessors:
+                block_predecessors[block] = []
+            block_predecessors[block].append(pred)
+    
+    # Step 4: Build the IR with correct block ordering
     ir = []
-    for line_num in sorted(all_instrs.keys()):
-        ir.append(all_instrs[line_num])
+    block_start_indices = {}  # Maps blocks to their starting position in IR
     
-    # Fix jump offsets for conditional instructions
+    # First pass: add all instructions from blocks in order
+    for block in ordered_blocks:
+        block_start_indices[block] = len(ir)
+        
+        for instr, _ in block_instructions[block]:
+            ir.append((instr, 1))  # Default jump offset
+    
+    # Step 5: Calculate correct jump offsets based on CFG structure
     for i, (instr, _) in enumerate(ir):
         if isinstance(instr, ChironAST.ConditionCommand):
+            # Find the block containing this instruction
+            containing_block = None
+            for block in ordered_blocks:
+                start_idx = block_start_indices[block]
+                end_idx = start_idx + len(block_instructions[block])
+                if start_idx <= i < end_idx:
+                    containing_block = block
+                    break
+            
+            if not containing_block:
+                continue
+            
+            # Handling condition command
+            successors = block_successors.get(containing_block, {})
+            
             if isinstance(instr.cond, ChironAST.BoolFalse):
-                # For a "False" jump (end of true branch), jump to the else block's end
-                # For the specific example pattern, this should be 2
-                ir[i] = (instr, 2)
-            elif not isinstance(instr.cond, ChironAST.BoolTrue):
-                # For a real condition, calculate appropriate offset to jump to else branch
-                # For the specific example pattern, this should be 3
-                ir[i] = (instr, 3)
+                # False jump - look for the next block to jump to
+                target_block = successors.get('Cond_False')
+                
+                if target_block and target_block in block_start_indices:
+                    target_idx = block_start_indices[target_block]
+                    offset = target_idx - i
+                    ir[i] = (instr, offset)
+            else:
+                # Condition check - handle true/false branches
+                false_target = successors.get('Cond_False')
+                
+                if false_target and false_target in block_start_indices:
+                    false_idx = block_start_indices[false_target]
+                    offset = false_idx - i
+                    ir[i] = (instr, offset)
+    
+    # Step 6: Intelligent fallback for unresolved jumps
+    for i, (instr, offset) in enumerate(ir):
+        if isinstance(instr, ChironAST.ConditionCommand):
+            # Ensure jump is within IR bounds
+            if i + offset >= len(ir) or i + offset < 0:
+                # Find the closest block beyond the current point
+                next_blocks = [
+                    block_start_indices[block] 
+                    for block in ordered_blocks 
+                    if block_start_indices[block] > i
+                ]
+                
+                if next_blocks:
+                    closest_block_idx = min(next_blocks)
+                    ir[i] = (instr, closest_block_idx - i)
+                else:
+                    # Fallback to end of IR
+                    ir[i] = (instr, len(ir) - i - 1)
     
     return ir
 
+    
 def collect_vars_from_expr(expr, var_set):
     """
     Recursively collect variable names from an expression.
@@ -399,7 +442,7 @@ if __name__ == "__main__":
         
         # Convert CFG to IR and update the IR handler
         post_ssa_ir = cfg_to_ir(normal_cfg)
-        
+                
         # Update IR
         irHandler.setIR(post_ssa_ir)
         

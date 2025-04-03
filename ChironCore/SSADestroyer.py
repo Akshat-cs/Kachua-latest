@@ -256,28 +256,27 @@ class SSADestroyer:
     
     def _remove_phi_functions(self):
         """
-        Remove all phi functions from the CFG while preserving jump offsets
+        Remove all phi functions from the CFG while updating line numbers
         """
         phi_count = len(self.phi_functions)
         
-        # First, collect information about jump offsets
-        jump_offsets = {}
-        for block in self.cfg.nodes():
-            if hasattr(block, 'instrlist'):
-                for i, (instr, pc) in enumerate(block.instrlist):
-                    if isinstance(instr, ChironAST.ConditionCommand):
-                        jump_offsets[(block, i)] = pc
+        # Sort phi functions by block name and position
+        sorted_phis = sorted(self.phi_functions, key=lambda x: (x[0].name, x[1]), reverse=True)
         
-        # Remove phi functions in reverse order to maintain valid indices
-        for block, idx, _ in sorted(self.phi_functions, key=lambda x: (x[0].name, x[1]), reverse=True):
+        # Remove phi functions and update line numbers
+        for block, idx, phi in sorted_phis:
+            # Get the line number of the phi function
+            _, phi_line = block.instrlist[idx]
+            
+            # Remove the phi function
             del block.instrlist[idx]
-        
-        # Restore jump offsets
-        for (block, idx), offset in jump_offsets.items():
-            if idx < len(block.instrlist):
-                instr, _ = block.instrlist[idx]
-                if isinstance(instr, ChironAST.ConditionCommand):
-                    block.instrlist[idx] = (instr, offset)
+            
+            # Update line numbers for instructions that should take their place
+            for i in range(idx, len(block.instrlist)):
+                instr, line = block.instrlist[i]
+                if line > phi_line:
+                    # Shift line numbers down to fill the gap
+                    block.instrlist[i] = (instr, line - 1)
         
         return phi_count
     

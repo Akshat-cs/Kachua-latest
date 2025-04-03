@@ -20,7 +20,6 @@ class AssignmentCommand(Instruction):
     def __str__(self):
         return self.lvar.__str__() + " = " + self.rexpr.__str__()
 
-# Akshat: added PhiInstruction class 
 class PhiInstruction(Instruction):
     def __init__(self, target_var, source_vars, source_blocks):
         self.target_var = target_var       # The variable receiving the phi result

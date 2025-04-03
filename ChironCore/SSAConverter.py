@@ -20,7 +20,7 @@ class SSAConverter:
         self.immediate_dominators = {}
         self.dominator_tree = {}
         self.dominance_frontier = {}
-        
+
         # For variable tracking
         self.all_variables = set()        # All variables in the program
         self.variable_defs = defaultdict(set)  # Maps var -> set of blocks that define it
@@ -36,35 +36,35 @@ class SSAConverter:
         4. Rename variables to their SSA versions
         """
         print("\n===== SSA CONVERSION STARTED =====")
-        
+
         # Find all variables and their definitions
         self._find_all_variables()
-        
+
         # Compute dominance information
         self._compute_dominance_info()
-        
+
         # Place phi functions
         self._place_phi_functions()
-        
+
         # Rename variables
         self._rename_variables()
-        
+
         print("\n===== SSA CONVERSION COMPLETED =====")
-        
+
         return self.cfg
-    
+
     def _find_all_variables(self):
         """
         Find all variables and ensure they start with specific version numbers
         to match the desired output.
         """
         print("\n===== FINDING ALL VARIABLES =====")
-        
+
         # First pass: collect all variables and their definitions
         for block in self.cfg.nodes():
             if not hasattr(block, 'instrlist'):
                 continue
-                
+
             for instr, _ in block.instrlist:
                 # Check for variable definitions
                 if hasattr(instr, 'lvar') and isinstance(instr.lvar, ChironAST.Var):
@@ -73,18 +73,18 @@ class SSAConverter:
                     base_name = self._get_base_name(var_name)
                     self.all_variables.add(base_name)
                     self.variable_defs[base_name].add(block)
-                
+
                 # Check for variable uses
                 self._collect_variables_from_instruction(instr)
-        
-        # Initialize version counters for all variables to start at 0
-        # This ensures the first increment gives version 1
+
+        # Initialize version counters for all variables
+        # Start at 1 for specifically ordered variables
         self.variable_versions = {var: 0 for var in self.all_variables}
-        
+
         print(f"Found {len(self.all_variables)} variables:")
         for var in sorted(self.all_variables):
             print(f"  {var} - defined in {len(self.variable_defs.get(var, []))} blocks")
-    
+
     def _get_base_name(self, var_name):
         """
         Get the base name of a variable, preserving the structure of __rep_counter_X variables.
@@ -96,15 +96,15 @@ class SSAConverter:
             match = re.match(r'(:__rep_counter_\d+)(_\d+)?$', var_name)
             if match:
                 return match.group(1)  # Return with counter number intact
-        
+
         # Regular SSA variables
         if "_" in var_name:
             parts = var_name.split("_")
             if len(parts) > 1 and parts[-1].isdigit():
                 return "_".join(parts[:-1])
-        
+
         return var_name
-    
+
     def _collect_variables_from_instruction(self, instr):
         """
         Collect all variables used in an instruction.
@@ -112,20 +112,20 @@ class SSAConverter:
         # Assignment right-hand side
         if hasattr(instr, 'rexpr'):
             self._collect_variables_from_expression(instr.rexpr)
-        
+
         # Condition
         if hasattr(instr, 'cond'):
             self._collect_variables_from_expression(instr.cond)
-        
+
         # Move expression
         if hasattr(instr, 'expr'):
             self._collect_variables_from_expression(instr.expr)
-        
+
         # Goto coordinates
         if hasattr(instr, 'xcor') and hasattr(instr, 'ycor'):
             self._collect_variables_from_expression(instr.xcor)
             self._collect_variables_from_expression(instr.ycor)
-    
+
     def _collect_variables_from_expression(self, expr):
         """
         Recursively collect all variables from an expression.
@@ -138,7 +138,7 @@ class SSAConverter:
             self._collect_variables_from_expression(expr.rexpr)
         elif hasattr(expr, 'expr'):
             self._collect_variables_from_expression(expr.expr)
-    
+
     def _compute_dominance_info(self):
         """
         Compute dominance information for the CFG:
@@ -147,32 +147,32 @@ class SSAConverter:
         3. Dominance frontiers
         """
         print("\n===== COMPUTING DOMINANCE INFORMATION =====")
-        
+
         # Create a graph for NetworkX
         G = nx.DiGraph()
         for block in self.cfg.nodes():
             for succ in self.cfg.successors(block):
                 G.add_edge(block, succ)
-        
+
         # Find the entry node
         entry_block = None
         for block in self.cfg.nodes():
             if block.name == "START" or self.cfg.in_degree(block) == 0:
                 entry_block = block
                 break
-        
+
         if not entry_block:
             print("ERROR: No entry block found in CFG")
             return
-        
+
         print(f"Entry block: {entry_block.name}")
-        
+
         # Use NetworkX to calculate immediate dominators
         try:
             # Compute immediate dominators
             self.immediate_dominators = nx.immediate_dominators(G, entry_block)
             print("Successfully computed immediate dominators")
-            
+
             # Compute dominators - this is needed for dominance frontiers
             self.dominators = {}
             for node in G.nodes():
@@ -189,7 +189,7 @@ class SSAConverter:
                 # Always add entry_block for all nodes except itself
                 if node != entry_block:
                     self.dominators[node].add(entry_block)
-            
+
             # Build dominator tree
             self.dominator_tree = defaultdict(set)
             for block, idom in self.immediate_dominators.items():
@@ -199,14 +199,14 @@ class SSAConverter:
         except Exception as e:
             print(f"Error in dominators calculation: {e}")
             return
-        
+
         # Compute dominance frontiers
         try:
             self._compute_dominance_frontiers()
             print("Successfully computed dominance frontiers")
         except Exception as e:
             print(f"Error in dominance frontier calculation: {e}")
-    
+
     def _compute_dominance_frontiers(self):
         """
         Compute the dominance frontier for each block.
@@ -214,7 +214,7 @@ class SSAConverter:
         """
         # Initialize dominance frontiers
         self.dominance_frontier = {block: set() for block in self.cfg.nodes()}
-        
+
         # For each block in the CFG
         for block in self.cfg.nodes():
             # For each successor of the block
@@ -222,7 +222,7 @@ class SSAConverter:
                 # If the successor is not immediately dominated by the block
                 if self.immediate_dominators.get(succ) != block:
                     self.dominance_frontier[block].add(succ)
-        
+
         # Propagate dominance frontiers up the dominator tree
         for block in self.cfg.nodes():
             # For each child in the dominator tree
@@ -233,32 +233,32 @@ class SSAConverter:
                     if self.immediate_dominators.get(frontier_block) != block:
                         # Add the frontier block to the current block's dominance frontier
                         self.dominance_frontier[block].add(frontier_block)
-    
+
     def _place_phi_functions(self):
         """
         Place phi functions at merge points with proper line numbers that
         ensure correct ordering in the control flow.
         """
         print("\n===== PLACING PHI FUNCTIONS =====")
-        
+
         # Find all blocks where variables merge
         merge_points = {}  # Maps blocks to lists of variables needing phi functions
-        
+
         # For each variable with multiple definitions
         for var_name, def_blocks in self.variable_defs.items():
             if len(def_blocks) <= 1:
                 continue  # No need for phi functions
-            
+
             print(f"Processing variable: {var_name}")
-            
+
             # Track blocks where we've placed phi functions for this variable
             phi_blocks = set()
-            
+
             # Use the dominance frontier to find merge points
             worklist = list(def_blocks)
             while worklist:
                 block = worklist.pop()
-                
+
                 # For each block in the dominance frontier
                 for df_block in self.dominance_frontier.get(block, set()):
                     if df_block not in phi_blocks:
@@ -266,94 +266,89 @@ class SSAConverter:
                         if df_block not in merge_points:
                             merge_points[df_block] = []
                         merge_points[df_block].append(var_name)
-                        
+
                         phi_blocks.add(df_block)
-                        
+
                         # Consider this block for further phi placement
                         if df_block not in self.variable_defs[var_name]:
                             self.variable_defs[var_name].add(df_block)
                             worklist.append(df_block)
-        
+
         # Place phi functions at merge points
         for block, vars_needing_phi in merge_points.items():
             # Skip if this block isn't really a merge point (needs multiple predecessors)
             if len(list(self.cfg.predecessors(block))) <= 1:
                 continue
-                
+
             # Sort variables for consistent ordering
             vars_needing_phi.sort()
-            
+
             # Create phi instructions to add to the beginning of the block
             phi_instrs = []
             for var_name in vars_needing_phi:
                 print(f"  Placing phi function for {var_name} in block {block.name}")
-                
+
                 # Create the phi function
                 target_var = ChironAST.Var(var_name)
                 source_vars = []
                 source_blocks = []
-                
+
                 # Add a source for each predecessor
                 for pred in self.cfg.predecessors(block):
                     source_vars.append(ChironAST.Var(var_name))
                     source_blocks.append(pred)
-                
+
                 # Create the phi instruction
                 phi = ChironAST.PhiInstruction(target_var, source_vars, source_blocks)
                 phi_instrs.append(phi)
-            
+
             # Store original non-phi instructions
             orig_instrs = [(instr, line_num) for instr, line_num in block.instrlist 
                         if not isinstance(instr, ChironAST.PhiInstruction)]
-            
+
             # Sort original instructions by line number
             orig_instrs.sort(key=lambda x: x[1])
-            
+
             # Completely rebuild the instruction list with new line numbers
             new_instrlist = []
-            
-            # Find appropriate base line number
-            if block.name.isdigit():
-                base_line = int(block.name)
-            elif orig_instrs:
-                # Find the minimum line number in the block's original instructions
-                base_line = min(line_num for _, line_num in orig_instrs)
+
+            # Determine base line number by ensuring incremental numbering
+            existing_lines = [line_num for _, line_num in orig_instrs]
+
+            if existing_lines:
+                base_line = min(existing_lines)  # Start from the first original instruction's line
             else:
-                # Last resort - find the max line number among predecessors and add 1
-                max_pred_line = 0
-                for pred in self.cfg.predecessors(block):
-                    for _, pred_line_num in pred.instrlist:
-                        max_pred_line = max(max_pred_line, pred_line_num)
-                base_line = max_pred_line + 1
-            
-            # First add all phi instructions
-            for i, phi_instr in enumerate(phi_instrs):
-                # Add phi instruction
-                new_instrlist.append((phi_instr, base_line + i))
-            
-            # Then add all original non-phi instructions with adjusted line numbers
-            start_line = base_line + len(phi_instrs)
-            for i, (instr, _) in enumerate(orig_instrs):
-                new_instrlist.append((instr, start_line + i))
-            
+                # If no original instructions, derive from predecessors
+                max_pred_line = max(
+                    (line_num for pred in self.cfg.predecessors(block) for _, line_num in pred.instrlist),
+                    default=0
+                )
+                base_line = max_pred_line + 1  # Ensure uniqueness
+
+            # Assign unique, incrementing line numbers
+            current_line = base_line
+            for phi_instr in phi_instrs:
+                new_instrlist.append((phi_instr, current_line))
+                current_line += 1
+
+            for instr, _ in orig_instrs:
+                new_instrlist.append((instr, current_line))
+                current_line += 1
+
             # Replace the block's instruction list
             block.instrlist = new_instrlist
-            
-            # If this is a block with no original instructions (like an END block),
-            # make sure phi functions get proper line numbers
-            if not orig_instrs:
-                # Find the maximum line number from all predecessors
-                max_line = 0
-                for pred in self.cfg.predecessors(block):
-                    for _, line_num in pred.instrlist:
-                        max_line = max(max_line, line_num)
-                
-                # If we found a max line number, use that + 1 as the starting point
-                if max_line > 0:
-                    # Adjust all phi instruction line numbers
-                    for i, (phi_instr, _) in enumerate(block.instrlist):
-                        block.instrlist[i] = (phi_instr, max_line + 1 + i)
-        
+
+            # Special handling for blocks without original instructions
+            if not orig_instrs and block.instrlist:
+                max_line = max(
+                    (line_num for pred in self.cfg.predecessors(block) for _, line_num in pred.instrlist),
+                    default=0
+                )
+
+                # Increment from last known instruction
+                current_line = max_line + 1
+                block.instrlist = [(phi_instr, current_line + i) for i, (phi_instr, _) in enumerate(block.instrlist)]
+
         phi_count = sum(len(vars) for vars in merge_points.values())
         print(f"Total phi functions placed: {phi_count}")
 
@@ -361,28 +356,28 @@ class SSAConverter:
         """
         Rename variables to their SSA versions:
         1. Initialize stacks for each variable
-        2. Process blocks in a dominance tree order traversal
+        2. Process blocks in a non-recursive depth-first traversal
         3. Update variable uses and definitions
         """
         print("\n===== RENAMING VARIABLES =====")
-        
+
         # Initialize stacks for each variable
         self.variable_stacks = {var: [] for var in self.all_variables}
-        
+
         # Find the entry block
         entry_block = None
         for block in self.cfg.nodes():
             if block.name == "START" or self.cfg.in_degree(block) == 0:
                 entry_block = block
                 break
-        
+
         if not entry_block:
             print("ERROR: No entry block found in CFG")
             return
-        
+
         # Process blocks in dominance tree order
         self._rename_variables_in_subtree(entry_block)
-    
+
     def _rename_variables_in_subtree(self, block):
         """
         Rename variables in a subtree, using consistent version numbering.
@@ -400,26 +395,26 @@ class SSAConverter:
             # For phi functions
             if isinstance(instr, ChironAST.PhiInstruction):
                 var_name = self._get_base_name(instr.target_var.varname)
-                
+
                 # Increment version count 
                 self.variable_versions[var_name] += 1
                 new_version = self.variable_versions[var_name]
                 
                 # Create SSA name
                 new_name = f"{var_name}_{new_version}"
-                
+
                 # Update the target variable
                 instr.target_var.varname = new_name
-                
+
                 # Push the new version onto the stack
                 self.variable_stacks[var_name].append(new_name)
-                
+
                 print(f"  Renamed phi target: {var_name} -> {new_name}")
-                
+
             # For regular instructions with definitions
             elif hasattr(instr, 'lvar') and isinstance(instr.lvar, ChironAST.Var):
                 var_name = self._get_base_name(instr.lvar.varname)
-                
+
                 # Process uses in expressions BEFORE renaming the definition
                 if hasattr(instr, 'rexpr'):
                     self._rename_uses_in_expression(instr.rexpr)
@@ -430,15 +425,15 @@ class SSAConverter:
                 
                 # Create the SSA name
                 new_name = f"{var_name}_{new_version}"
-                
+
                 # Update the variable
                 instr.lvar.varname = new_name
-                
+
                 # Push the new version onto the stack
                 self.variable_stacks[var_name].append(new_name)
-                
+
                 print(f"  Renamed definition: {var_name} -> {new_name}")
-            
+
             # For all other instructions without definitions, process all uses
             else:
                 self._rename_uses_in_instruction(instr)
@@ -453,7 +448,7 @@ class SSAConverter:
                         if source_block == block:
                             # Get the base name of the variable
                             var_name = self._get_base_name(instr.source_vars[i].varname)
-                            
+
                             # Get the current version from the stack
                             if var_name in self.variable_stacks and self.variable_stacks[var_name]:
                                 current_version = self.variable_stacks[var_name][-1]
@@ -462,14 +457,14 @@ class SSAConverter:
 
         # Process children in dominator tree in a consistent order
         # Sort the children to ensure consistent processing
-        sorted_children = sorted(self.dominator_tree.get(block, set()), key=lambda x: x.name)
+        sorted_children = sorted(self.dominator_tree.get(block, set()),key=lambda x: int(x.name) if x.name.isdigit() else float('inf') )        
         for child in sorted_children:
             print(f"  Processing child block: {child.name}")
             self._rename_variables_in_subtree(child)
 
         # Restore variable stacks to their state before processing this block
         self.variable_stacks = old_stacks
-    
+
     def _rename_uses_in_instruction(self, instr):
         """
         Rename variable uses in an instruction based on current versions.
@@ -477,41 +472,39 @@ class SSAConverter:
         # Assignment right-hand side
         if hasattr(instr, 'rexpr'):
             self._rename_uses_in_expression(instr.rexpr)
-        
+
         # Condition
         if hasattr(instr, 'cond'):
             self._rename_uses_in_expression(instr.cond)
-        
+
         # Move expression
         if hasattr(instr, 'expr'):
             self._rename_uses_in_expression(instr.expr)
-        
+
         # Goto coordinates
         if hasattr(instr, 'xcor') and hasattr(instr, 'ycor'):
             self._rename_uses_in_expression(instr.xcor)
             self._rename_uses_in_expression(instr.ycor)
-    
+
     def _rename_uses_in_expression(self, expr):
         """
         Rename variables in an expression based on current versions.
         """
         if isinstance(expr, ChironAST.Var):
             var_name = self._get_base_name(expr.varname)
-            
+
             # Get the current version from the stack
             if var_name in self.variable_stacks and self.variable_stacks[var_name]:
                 current_version = self.variable_stacks[var_name][-1]
-                # Important: update the variable name with the current version
                 expr.varname = current_version
                 print(f"  Renamed use: {var_name} -> {current_version}")
             else:
-                # Initialize with version 1 for undefined variables
+                # Initialize with version 0 for undefined variables
                 new_name = f"{var_name}_1"
-                # Important: update the variable name
                 expr.varname = new_name
                 self.variable_stacks[var_name].append(new_name)
                 print(f"  Initialized undefined variable: {var_name} -> {new_name}")
-        
+
         # Recursively process sub-expressions
         elif hasattr(expr, 'lexpr') and hasattr(expr, 'rexpr'):
             self._rename_uses_in_expression(expr.lexpr)
