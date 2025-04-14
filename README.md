@@ -21,9 +21,18 @@ $ java -cp ../extlib/antlr-4.7.2-complete.jar org.antlr.v4.Tool \
 The main directory for source files is `ChironCore`. We have examples of the turtle programs in `examples` folder.
 To pass parameters (input params) for running a turtle program, use the `-d` flag. Pass the parameters as a python dictionary.
 
+This is just for testing the SSA conversion and Out-of-SSA CFG.
+
 ```bash
 $ cd ChironCore
 $ python ./chiron.py -cfg_dump  -ssa -r ./example/example1.tl -d '{":x": 20, "y": 30, ":z": 20, ":p": 40}''
+```
+
+Example of Dead Code Elimination, in this case first SSA conversion happens then DCE takes place on SSA CFG, then unSSA conversion happens.
+
+```bash
+$ cd ChironCore
+$ python ./chiron.py -cfg_dump -dce -r ./example/example3.tl -d '{":x": 20, "y": 30, ":z": 20, ":p": 40}''
 ```
 
 ### See help for other command line options
