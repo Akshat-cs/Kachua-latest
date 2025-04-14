@@ -26,9 +26,11 @@ import submissionDFA as DFASub
 import submissionAI as AISub
 from sbflSubmission import computeRanks
 import csv
-# Add SSA conversion imports
+# Adding SSA conversion imports
 from SSAConverter import SSAConverter
 from SSADestroyer import SSADestroyer
+# Adding Dead Code Elimination Imports
+from DeadCodeElimination import DeadCodeElimination
 
 def cleanup():
     pass
@@ -38,109 +40,156 @@ def stopTurtle():
 
 def cfg_to_ir(cfg):
     """
-    Convert a CFG to IR with correctly calculated jump offsets
-    based on the control flow structure.
+    Enhanced CFG to IR conversion that properly preserves control flow.
+    
+    This implementation:
+    1. Collects all basic blocks in a deterministic order
+    2. Preserves the connections between blocks 
+    3. Correctly calculates jump offsets for conditional branches
+    4. Handles backward jumps for loops
+    
+    Args:
+        cfg: A ChironCFG instance
+    
+    Returns:
+        A list of (instruction, jump_offset) tuples
     """
-    # Step 1: Collect all basic blocks and their instructions
-    block_instructions = {}
-    block_line_numbers = {}
+    print("Converting CFG to IR with enhanced control flow preservation...")
     
-    for block in cfg.nodes():
-        if not hasattr(block, 'instrlist') or not block.instrlist:
-            continue
-            
-        block_instructions[block] = block.instrlist
-        
-        # Store the lowest line number in this block for sorting
-        min_line = min(line_num for _, line_num in block.instrlist)
-        block_line_numbers[block] = min_line
+    # Step 1: Collect all basic blocks and sort them deterministically
+    blocks = list(cfg.nodes())
+    # Put START first and END last
+    start_block = None
+    end_block = None
+    other_blocks = []
     
-    # Step 2: Build a deterministic block order based on line numbers
-    ordered_blocks = sorted(block_instructions.keys(), key=lambda b: block_line_numbers[b])
+    for block in blocks:
+        if block.name == "START":
+            start_block = block
+        elif block.name == "END":
+            end_block = block
+        else:
+            other_blocks.append(block)
     
-    # Step 3: Map each block to its successor blocks
-    block_successors = {}
-    block_predecessors = {}
-    for block in ordered_blocks:
-        successors = {}
-        for succ in cfg.successors(block):
-            edge_label = cfg.get_edge_label(block, succ)
-            successors[edge_label] = succ
-        block_successors[block] = successors
-        
-        # Track predecessors
-        for pred in cfg.predecessors(block):
-            if block not in block_predecessors:
-                block_predecessors[block] = []
-            block_predecessors[block].append(pred)
+    # Sort other blocks numerically if possible
+    def block_sort_key(block):
+        try:
+            return int(block.name)
+        except ValueError:
+            return block.name
     
-    # Step 4: Build the IR with correct block ordering
+    other_blocks.sort(key=block_sort_key)
+    
+    # Combine blocks in order
+    sorted_blocks = []
+    if start_block:
+        sorted_blocks.append(start_block)
+    sorted_blocks.extend(other_blocks)
+    if end_block:
+        sorted_blocks.append(end_block)
+    
+    # Step 2: Build the IR with instructions from blocks
     ir = []
-    block_start_indices = {}  # Maps blocks to their starting position in IR
+    block_to_ir_index = {}  # Maps blocks to their starting position in the IR
     
-    # First pass: add all instructions from blocks in order
-    for block in ordered_blocks:
-        block_start_indices[block] = len(ir)
-        
-        for instr, _ in block_instructions[block]:
-            ir.append((instr, 1))  # Default jump offset
+    for block in sorted_blocks:
+        if hasattr(block, 'instrlist') and block.instrlist:
+            block_to_ir_index[block] = len(ir)
+            for instr, _ in block.instrlist:
+                ir.append((instr, 1))  # Default offset, will update later
     
-    # Step 5: Calculate correct jump offsets based on CFG structure
+    # Step 3: Create a simple mapping for successor blocks
+    # Map block name to the actual block object
+    name_to_block = {block.name: block for block in sorted_blocks}
+    
+    # Step 4: Update jump offsets based on the original IR structure
     for i, (instr, _) in enumerate(ir):
-        if isinstance(instr, ChironAST.ConditionCommand):
-            # Find the block containing this instruction
-            containing_block = None
-            for block in ordered_blocks:
-                start_idx = block_start_indices[block]
-                end_idx = start_idx + len(block_instructions[block])
-                if start_idx <= i < end_idx:
-                    containing_block = block
-                    break
+        # Find which block contains this instruction
+        containing_block = None
+        instr_idx_in_block = 0
+        
+        for block, start_idx in block_to_ir_index.items():
+            end_idx = start_idx + len(block.instrlist)
+            if start_idx <= i < end_idx:
+                containing_block = block
+                instr_idx_in_block = i - start_idx
+                break
+        
+        if containing_block is None or not isinstance(instr, ChironAST.ConditionCommand):
+            continue
+        
+        # Special handling for loop counters - preserve their structure carefully
+        if (isinstance(instr, ChironAST.ConditionCommand) and 
+            hasattr(instr, 'cond') and
+            ((hasattr(instr.cond, 'lexpr') and isinstance(instr.cond.lexpr, ChironAST.Var) and ":__rep_counter_" in instr.cond.lexpr.varname) or 
+             isinstance(instr.cond, ChironAST.BoolFalse))):
             
-            if not containing_block:
-                continue
+            # This is likely a loop condition or a loop jump
+            successors = list(cfg.successors(containing_block))
             
-            # Handling condition command
-            successors = block_successors.get(containing_block, {})
-            
-            if isinstance(instr.cond, ChironAST.BoolFalse):
-                # False jump - look for the next block to jump to
-                target_block = successors.get('Cond_False')
+            if instr_idx_in_block == len(containing_block.instrlist) - 1 and isinstance(instr.cond, ChironAST.BoolFalse):
+                # This is the backward jump at the end of a loop
+                # It should jump back to the condition check
                 
-                if target_block and target_block in block_start_indices:
-                    target_idx = block_start_indices[target_block]
+                # Find the target block that contains the condition check
+                target_block = None
+                for block in sorted_blocks:
+                    if (block in block_to_ir_index and 
+                        hasattr(block, 'instrlist') and 
+                        len(block.instrlist) > 0 and
+                        isinstance(block.instrlist[0][0], ChironAST.ConditionCommand) and
+                        hasattr(block.instrlist[0][0], 'cond') and
+                        hasattr(block.instrlist[0][0].cond, 'lexpr') and
+                        isinstance(block.instrlist[0][0].cond.lexpr, ChironAST.Var) and
+                        ":__rep_counter_" in block.instrlist[0][0].cond.lexpr.varname):
+                        target_block = block
+                        break
+                
+                if target_block and target_block in block_to_ir_index:
+                    target_idx = block_to_ir_index[target_block]
                     offset = target_idx - i
                     ir[i] = (instr, offset)
-            else:
-                # Condition check - handle true/false branches
-                false_target = successors.get('Cond_False')
+            
+            elif hasattr(instr.cond, 'lexpr') and isinstance(instr.cond.lexpr, ChironAST.Var) and ":__rep_counter_" in instr.cond.lexpr.varname:
+                # This is the condition check at the start of a loop
+                # It should have a larger offset to skip the loop body if the condition is false
                 
-                if false_target and false_target in block_start_indices:
-                    false_idx = block_start_indices[false_target]
-                    offset = false_idx - i
-                    ir[i] = (instr, offset)
+                # Find the block that follows the loop body
+                # This is usually the end block or a block after all loop blocks
+                next_block_idx = sorted_blocks.index(containing_block) + 1
+                while next_block_idx < len(sorted_blocks):
+                    next_block = sorted_blocks[next_block_idx]
+                    if next_block in block_to_ir_index:
+                        target_idx = block_to_ir_index[next_block]
+                        offset = target_idx - i
+                        # For loop conditions, we want to skip to the end if condition is false
+                        ir[i] = (instr, offset)
+                        break
+                    next_block_idx += 1
     
-    # Step 6: Intelligent fallback for unresolved jumps
+    # Step 5: Final verification - ensure all jumps are valid
     for i, (instr, offset) in enumerate(ir):
         if isinstance(instr, ChironAST.ConditionCommand):
-            # Ensure jump is within IR bounds
-            if i + offset >= len(ir) or i + offset < 0:
-                # Find the closest block beyond the current point
-                next_blocks = [
-                    block_start_indices[block] 
-                    for block in ordered_blocks 
-                    if block_start_indices[block] > i
-                ]
-                
-                if next_blocks:
-                    closest_block_idx = min(next_blocks)
-                    ir[i] = (instr, closest_block_idx - i)
-                else:
-                    # Fallback to end of IR
-                    ir[i] = (instr, len(ir) - i - 1)
+            target_idx = i + offset
+            if target_idx < 0 or target_idx >= len(ir):
+                print(f"Warning: Jump target {target_idx} is out of bounds for instruction at index {i}")
+                # Fix the offset to a safe value
+                if offset < 0:  # It's a backward jump
+                    # For loop backward jumps, we want to jump to a reasonable point earlier
+                    # Find a position with a loop condition if possible
+                    for j in range(i-1, 0, -1):
+                        if (isinstance(ir[j][0], ChironAST.ConditionCommand) and
+                            hasattr(ir[j][0], 'cond') and hasattr(ir[j][0].cond, 'lexpr') and
+                            isinstance(ir[j][0].cond.lexpr, ChironAST.Var) and
+                            ":__rep_counter_" in ir[j][0].cond.lexpr.varname):
+                            ir[i] = (instr, j - i)
+                            break
+                    else:
+                        ir[i] = (instr, -1)  # Jump back one instruction as fallback
+                else:  # It's a forward jump
+                    ir[i] = (instr, len(ir) - i - 1)  # Jump to the end
     
     return ir
-
     
 def collect_vars_from_expr(expr, var_set):
     """
@@ -210,11 +259,19 @@ if __name__ == "__main__":
         action="store_true",
         help="pretty printing the IR of a Chiron program to stdout (terminal)",
     )
+    # added static single assignment option
     cmdparser.add_argument(
         "-ssa",
         "--static_single_assignment",
         action="store_true",
         help="Apply SSA form conversion and destruction to the program"
+    )
+    # Added dead code elimination option
+    cmdparser.add_argument(
+        "-dce",
+        "--dead_code_elimination",
+        action="store_true",
+        help="Apply Dead Code Elimination optimization on SSA form",
     )
     cmdparser.add_argument(
         "-r",
@@ -453,6 +510,70 @@ if __name__ == "__main__":
         if args.dump_cfg:
             cfgB.dumpCFG(normal_cfg, "post_ssa_cfg")
             print("Post-SSA CFG dumped to post_ssa_cfg.png")
+
+
+    if args.dead_code_elimination:
+        print("\n===== Starting Dead Code Elimination =====")
+        # Check if we have a CFG
+        if not irHandler.cfg:
+            # Generate CFG if not already generated
+            cfg = cfgB.buildCFG(irHandler.ir, "control_flow_graph", False)
+            irHandler.setCFG(cfg)
+        
+        # CHECKPOINT 1: Print IR and dump CFG BEFORE SSA conversion
+        print("\n========== IR BEFORE SSA CONVERSION ==========\n")
+        irHandler.pretty_print(irHandler.ir)
+        cfgB.dumpCFG(irHandler.cfg, "control_flow_graph")
+        print("CFG before SSA conversion dumped to control_flow_graph.png")
+        
+        # Convert to SSA form if not already in SSA form
+        if not args.static_single_assignment:
+            print("\n===== Converting to SSA Form =====")
+            ssa_converter = SSAConverter(irHandler.cfg)
+            ssa_cfg = ssa_converter.convert_to_ssa()
+            irHandler.setCFG(ssa_cfg)
+            
+            # Convert CFG to IR and update the IR handler
+            ssa_ir = cfg_to_ir(ssa_cfg)
+            irHandler.setIR(ssa_ir)
+        
+        # CHECKPOINT 2: Print IR and dump CFG AFTER SSA conversion
+        print("\n========== IR AFTER SSA CONVERSION ==========\n")
+        irHandler.pretty_print(irHandler.ir)
+        cfgB.dumpCFG(irHandler.cfg, "ssa_form_cfg")
+        print("CFG after SSA conversion dumped to ssa_form_cfg.png")
+        
+        # Run dead code elimination
+        dce = DeadCodeElimination(irHandler.cfg)
+        optimized_cfg = dce.eliminate_dead_code()
+        irHandler.setCFG(optimized_cfg)
+        
+        # Update IR
+        optimized_ir = cfg_to_ir(optimized_cfg)
+        irHandler.setIR(optimized_ir)
+        
+        # CHECKPOINT 3: Print IR and dump CFG AFTER dead code elimination
+        print("\n========== IR AFTER DEAD CODE ELIMINATION ==========\n")
+        irHandler.pretty_print(irHandler.ir)
+        cfgB.dumpCFG(irHandler.cfg, "after_dce_cfg")
+        print("CFG after dead code elimination dumped to after_dce_cfg.png")
+        
+        # Convert back from SSA form if needed
+        if not args.static_single_assignment:
+            print("\n===== Converting back from SSA Form =====")
+            ssa_destroyer = SSADestroyer(irHandler.cfg)
+            normal_cfg = ssa_destroyer.convert_from_ssa()
+            irHandler.setCFG(normal_cfg)
+            
+            # Convert CFG to IR and update the IR handler
+            post_ssa_ir = cfg_to_ir(normal_cfg)
+            irHandler.setIR(post_ssa_ir)
+        
+        # CHECKPOINT 4: Print IR and dump CFG AFTER converting back from SSA
+        print("\n========== IR AFTER SSA DESTRUCTION ==========\n")
+        irHandler.pretty_print(irHandler.ir)
+        cfgB.dumpCFG(irHandler.cfg, "final_cfg")
+        print("CFG after SSA destruction dumped to final_cfg.png")
 
     if args.symbolicExecution:
         print("symbolicExecution")

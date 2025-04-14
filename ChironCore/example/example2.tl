@@ -1,8 +1,12 @@
-:y = :x
-if :x <= 42 [
-   :y = :y + 40
-   :x = :x +20
+:x = 20
+:y = 10
+:z = 50
+if (:y > :x) [
+:y = 0
+left :y
 ] else [
-   :y = :y + 22
-   :x = :x +22
+right 50
 ]
+forward :y
+
+
