@@ -1,38 +1,40 @@
+penup
+goto (50, 50)
 pendown
+:two = 200
+:one = 100
+forward 50
+right 90
+forward 50
+right 90
+forward 50  
+right 90
+forward 50
+penup
 
-repeat 3 [
-
-	if (:x > :y) [
-		penup
-		goto (:x, :y)
-		pendown
-		repeat 4 [
-			forward :x
-			left 90
+:vara = 20
+:varb = 100
+:varc = 60
+repeat 1 [
+	goto (0, 0)
+	pendown
+	repeat 6 [
+		if (:vara != :varb) [
+			if ( :vara > :varb) [ right :vara ]
+			else [ left :varb ]
 		]
-	] else [
-		penup
-		goto (:y, :x)
-		pendown
-		repeat 5 [
-			forward :p
-			left 72
+		else [
+		 if ((:vara <= :varc) || (:varb <= :varc)) [
+			:vara = :varc / :vara
+			:varb = :varb / :varc
+			:varc = :varb
+		 ]
 		]
+		forward :vara
+		right :varb
+		forward :varc
+		left :varc
 	]
-
-	if (:z >= :p) [
-		penup
-		goto (:p, :x + :z)
-		pendown
-		repeat 6 [
-			backward :x
-			left 60
-		]
-	]
-
-	:x = :x + 10
-	:y = :y + 10
-	:z = :z + 10
+	left 45
 ]
-
 penup

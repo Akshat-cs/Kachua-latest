@@ -5,6 +5,7 @@
 import os
 import sys
 import copy
+import re
 from collections import defaultdict, deque
 
 # Import necessary Chiron modules
@@ -140,8 +141,22 @@ class DeadCodeElimination:
         """
         print("Identifying critical instructions...")
         
+        # First, find all variables referenced in conditions
+        control_vars = set()
         for block in self.cfg.nodes():
-            if not hasattr(block, 'instrlist') or not block.instrlist:
+            if not hasattr(block, 'instrlist'):
+                continue
+                
+            for instr_idx, (instr, _) in enumerate(block.instrlist):
+                if isinstance(instr, ChironAST.ConditionCommand):
+                    # Extract all variables from condition string representation
+                    cond_str = str(instr)
+                    for var_match in re.findall(r'(:[\w_]+)', cond_str):
+                        control_vars.add(var_match)
+        
+        # Now identify critical instructions
+        for block in self.cfg.nodes():
+            if not hasattr(block, 'instrlist'):
                 continue
                 
             for instr_idx, (instr, _) in enumerate(block.instrlist):
@@ -151,13 +166,25 @@ class DeadCodeElimination:
                 if isinstance(instr, ChironAST.ConditionCommand):
                     self.critical_instructions.add(instr_loc)
                 
-                # Side effect instructions (turtle movements, pen changes) are critical
+                # Side effect instructions are critical
                 if (isinstance(instr, ChironAST.MoveCommand) or 
                     isinstance(instr, ChironAST.PenCommand) or 
                     isinstance(instr, ChironAST.GotoCommand)):
                     self.critical_instructions.add(instr_loc)
-        
-        print(f"Found {len(self.critical_instructions)} critical instructions")
+                    
+                # Variable definitions used in control flow are critical
+                if (isinstance(instr, ChironAST.AssignmentCommand) and 
+                    hasattr(instr, 'lvar') and 
+                    str(instr.lvar) in control_vars):
+                    print(f"  Critical instruction (used in control flow): {instr}")
+                    self.critical_instructions.add(instr_loc)
+                    
+                # Loop counter initializations are ALWAYS critical
+                if (isinstance(instr, ChironAST.AssignmentCommand) and 
+                    hasattr(instr, 'lvar') and 
+                    ":__rep_counter_" in str(instr.lvar)):
+                    print(f"  Critical instruction (loop counter): {instr}")
+                    self.critical_instructions.add(instr_loc)
     
     def _mark_live_instructions(self):
         """

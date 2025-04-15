@@ -38,121 +38,96 @@ def cleanup():
 def stopTurtle():
     turtle.bye()
 
-def cfg_to_ir(cfg):
+def reset_line_numbers_in_cfg(cfg):
     """
-    Convert a CFG to IR with correctly calculated jump offsets
-    based on the control flow structure.
+    Reassign line numbers for all instructions in the CFG to ensure they're sequential
+    and match how instructions will be arranged in the IR.
+    
+    This helps avoid issues with duplicate line numbers across different blocks.
     """
-    # Step 1: Collect all basic blocks and their instructions
-    block_instructions = {}
-    block_line_numbers = {}
-
-    for block in cfg.nodes():
+    print("Reassigning line numbers in CFG...")
+    
+    # Step 1: Create a natural block ordering
+    def block_sort_key(block):
+        if block.name == "START":
+            return -1  # Start comes first
+        elif block.name == "END":
+            return float('inf')  # End comes last
+        elif block.name.isdigit():
+            return int(block.name)  # Sort numeric blocks by their integer value
+        else:
+            return 10000 + hash(block.name) % 10000  # Other blocks sorted consistently but arbitrarily
+    
+    ordered_blocks = sorted(cfg.nodes(), key=block_sort_key)
+    
+    # Step 2: Assign new line numbers sequentially across all blocks
+    new_line = 0
+    for block in ordered_blocks:
         if not hasattr(block, 'instrlist') or not block.instrlist:
             continue
-            
-        block_instructions[block] = block.instrlist
         
-        # Store the lowest line number in this block for sorting
-        min_line = min(line_num for _, line_num in block.instrlist)
-        block_line_numbers[block] = min_line
-
-
-
-
-    # Step 2: Build a deterministic block order based on line numbers
-    ordered_blocks = sorted(block_instructions.keys(), key=lambda b: block_line_numbers[b])
-
-
-
-
-
-
-
-
-
-
-    # Step 3: Map each block to its successor blocks
-    block_successors = {}
-    block_predecessors = {}
-    for block in ordered_blocks:
-        successors = {}
-        for succ in cfg.successors(block):
-            edge_label = cfg.get_edge_label(block, succ)
-            successors[edge_label] = succ
-        block_successors[block] = successors
-
-        # Track predecessors
-        for pred in cfg.predecessors(block):
-            if block not in block_predecessors:
-                block_predecessors[block] = []
-            block_predecessors[block].append(pred)
-
-    # Step 4: Build the IR with correct block ordering
-    ir = []
-    block_start_indices = {}  # Maps blocks to their starting position in IR
+        # Sort instructions within each block by their original line numbers
+        block.instrlist.sort(key=lambda x: x[1])
+        
+        # Assign new sequential line numbers
+        new_block_instrlist = []
+        for instr, _ in block.instrlist:
+            new_block_instrlist.append((instr, new_line))
+            new_line += 1
+        
+        # Replace the block's instruction list
+        block.instrlist = new_block_instrlist
     
-    # First pass: add all instructions from blocks in order
-    for block in ordered_blocks:
-        block_start_indices[block] = len(ir)
-        
-        for instr, _ in block_instructions[block]:
-            ir.append((instr, 1))  # Default jump offset
+    print(f"Reassigned {new_line} line numbers")
+    return cfg
 
-    # Step 5: Calculate correct jump offsets based on CFG structure
-    for i, (instr, _) in enumerate(ir):
+def cfg_to_ir(cfg):
+    """
+    Convert a CFG to IR with correctly calculated jump offsets.
+    Assumes line numbers are already sequential and reflect instruction order.
+    """
+    # Collect all instructions from all blocks in order of line number
+    all_instrs = []
+    for block in cfg.nodes():
+        if hasattr(block, 'instrlist') and block.instrlist:
+            all_instrs.extend(block.instrlist)
+    
+    # Sort by line number (should already be sequential)
+    all_instrs.sort(key=lambda x: x[1])
+    
+    # Create initial IR with default jump offsets
+    ir = [(instr, 1) for instr, _ in all_instrs]
+    
+    # Maps line numbers to positions in the IR
+    line_to_pos = {line: i for i, (_, line) in enumerate(all_instrs)}
+    
+    # Calculate correct jump offsets for conditional instructions
+    for i, (instr, jump) in enumerate(ir):
         if isinstance(instr, ChironAST.ConditionCommand):
+            # For each successor in the CFG, find the target line
+            orig_line = all_instrs[i][1]
+            src_block = None
+            
             # Find the block containing this instruction
-            containing_block = None
-            for block in ordered_blocks:
-                start_idx = block_start_indices[block]
-                end_idx = start_idx + len(block_instructions[block])
-                if start_idx <= i < end_idx:
-                    containing_block = block
-                    break
+            for block in cfg.nodes():
+                if hasattr(block, 'instrlist'):
+                    if any(line == orig_line for _, line in block.instrlist):
+                        src_block = block
+                        break
             
-            if not containing_block:
-                continue
-            
-            # Handling condition command
-            successors = block_successors.get(containing_block, {})
-            
-            if isinstance(instr.cond, ChironAST.BoolFalse):
-                # False jump - look for the next block to jump to
-                target_block = successors.get('Cond_False')
-                
-                if target_block and target_block in block_start_indices:
-                    target_idx = block_start_indices[target_block]
-                    offset = target_idx - i
-                    ir[i] = (instr, offset)
-            else:
-                # Condition check - handle true/false branches
-                false_target = successors.get('Cond_False')
-                
-                if false_target and false_target in block_start_indices:
-                    false_idx = block_start_indices[false_target]
-                    offset = false_idx - i
-                    ir[i] = (instr, offset)
+            if src_block:
+                # Find the false branch successor
+                for succ in cfg.successors(src_block):
+                    if cfg.get_edge_label(src_block, succ) in ['Cond_False', 'False']:
+                        # Find the first instruction in the successor block
+                        if hasattr(succ, 'instrlist') and succ.instrlist:
+                            target_line = min(line for _, line in succ.instrlist)
+                            target_pos = line_to_pos[target_line]
+                            
+                            # Calculate the offset
+                            offset = target_pos - i
+                            ir[i] = (instr, offset)
     
-    # Step 6: Intelligent fallback for unresolved jumps
-    for i, (instr, offset) in enumerate(ir):
-        if isinstance(instr, ChironAST.ConditionCommand):
-            # Ensure jump is within IR bounds
-            if i + offset >= len(ir) or i + offset < 0:
-                # Find the closest block beyond the current point
-                next_blocks = [
-                    block_start_indices[block] 
-                    for block in ordered_blocks 
-                    if block_start_indices[block] > i
-                ]
-                
-                if next_blocks:
-                    closest_block_idx = min(next_blocks)
-                    ir[i] = (instr, closest_block_idx - i)
-                else:
-                    # Fallback to end of IR
-                    ir[i] = (instr, len(ir) - i - 1)
-
     return ir
     
 def collect_vars_from_expr(expr, var_set):
@@ -430,7 +405,7 @@ if __name__ == "__main__":
         irHandler.pretty_print(irHandler.ir)
 
         # Store the original IR for later reference
-        original_ir = list(irHandler.ir)  # Make a copy
+        original_ir = list(irHandler.ir)
 
         print("\n===== Converting to SSA Form =====")
         if not irHandler.cfg:
@@ -441,6 +416,10 @@ if __name__ == "__main__":
         # Convert to SSA form
         ssa_converter = SSAConverter(irHandler.cfg)
         ssa_cfg = ssa_converter.convert_to_ssa()
+        
+        # Reassign line numbers to ensure they're sequential and unique
+        ssa_cfg = reset_line_numbers_in_cfg(ssa_cfg)
+        
         irHandler.setCFG(ssa_cfg)
         
         # Convert CFG to IR and update the IR handler
@@ -459,21 +438,19 @@ if __name__ == "__main__":
         # Convert back from SSA form
         ssa_destroyer = SSADestroyer(irHandler.cfg)
         normal_cfg = ssa_destroyer.convert_from_ssa()
+        
+        # Reassign line numbers again after SSA destruction
+        normal_cfg = reset_line_numbers_in_cfg(normal_cfg)
+        
         irHandler.setCFG(normal_cfg)
         
         # Convert CFG to IR and update the IR handler
         post_ssa_ir = cfg_to_ir(normal_cfg)
-                
-        # Update IR
         irHandler.setIR(post_ssa_ir)
         
         # Print post-SSA IR
         print("\n========== IR AFTER SSA DESTRUCTION ==========\n")
         irHandler.pretty_print(irHandler.ir)
-        
-        if args.dump_cfg:
-            cfgB.dumpCFG(normal_cfg, "post_ssa_cfg")
-            print("Post-SSA CFG dumped to post_ssa_cfg.png")
 
 
     if args.dead_code_elimination:
@@ -495,6 +472,10 @@ if __name__ == "__main__":
             print("\n===== Converting to SSA Form =====")
             ssa_converter = SSAConverter(irHandler.cfg)
             ssa_cfg = ssa_converter.convert_to_ssa()
+            
+            # Reassign line numbers to ensure they're sequential and unique
+            ssa_cfg = reset_line_numbers_in_cfg(ssa_cfg)
+            
             irHandler.setCFG(ssa_cfg)
             
             # Convert CFG to IR and update the IR handler
@@ -510,6 +491,10 @@ if __name__ == "__main__":
         # Run dead code elimination
         dce = DeadCodeElimination(irHandler.cfg)
         optimized_cfg = dce.eliminate_dead_code()
+        
+        # Reassign line numbers after DCE to ensure consistency
+        optimized_cfg = reset_line_numbers_in_cfg(optimized_cfg)
+        
         irHandler.setCFG(optimized_cfg)
         
         # Update IR
@@ -527,6 +512,10 @@ if __name__ == "__main__":
             print("\n===== Converting back from SSA Form =====")
             ssa_destroyer = SSADestroyer(irHandler.cfg)
             normal_cfg = ssa_destroyer.convert_from_ssa()
+            
+            # Reassign line numbers again after SSA destruction
+            normal_cfg = reset_line_numbers_in_cfg(normal_cfg)
+            
             irHandler.setCFG(normal_cfg)
             
             # Convert CFG to IR and update the IR handler
