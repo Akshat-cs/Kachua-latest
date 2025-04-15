@@ -25,14 +25,14 @@ This is just for testing the SSA conversion and Out-of-SSA CFG. We using `-ssa` 
 
 ```bash
 $ cd ChironCore
-$ python ./chiron.py -cfg_dump  -ssa -r ./example/example1.tl -d '{":x": 20, "y": 30, ":z": 20, ":p": 40}''
+$ python ./chiron.py -cfg_dump  -ssa -r ./example/example1.tl -d '{":x": 20, "y": 30, ":z": 20, ":p": 40}'
 ```
 
 Example of Dead Code Elimination, in this case first SSA conversion happens then DCE takes place on SSA CFG, then unSSA conversion happens. We using `-dce` flg here.
 
 ```bash
 $ cd ChironCore
-$ python ./chiron.py -cfg_dump -dce -r ./example/example3.tl -d '{":x": 20, "y": 30, ":z": 20, ":p": 40}''
+$ python ./chiron.py -cfg_dump -dce -r ./example/example3.tl -d '{":x": 20, "y": 30, ":z": 20, ":p": 40}'
 ```
 
 ### See help for other command line options
