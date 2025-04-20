@@ -7,7 +7,9 @@ forward :x
 :w = :x + 5  
 
 if (:x > :y) [
-  :a = 50    
+  :a = 50   
+  :x = 40 
+  :y = 20
   right 90
 ] else [
   :b = 60    
