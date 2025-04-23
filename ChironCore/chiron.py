@@ -454,6 +454,8 @@ if __name__ == "__main__":
 
 
     if args.dead_code_elimination:
+        start_time = time.time()
+
         print("\n===== Starting Dead Code Elimination =====")
         # Check if we have a CFG
         if not irHandler.cfg:
@@ -528,6 +530,9 @@ if __name__ == "__main__":
         cfgB.dumpCFG(irHandler.cfg, "final_cfg")
         print("CFG after SSA destruction dumped to final_cfg.png")
 
+        end_time = time.time()
+        print('dce time: ', end_time - start_time)
+
     if args.symbolicExecution:
         print("symbolicExecution")
         if not args.params:
@@ -563,6 +568,8 @@ if __name__ == "__main__":
     if args.run:
         # for stmt,pc in ir:
         #     print(str(stmt.__class__.__bases__[0].__name__),pc)
+        
+        start_time = time.time()
 
         inptr = ConcreteInterpreter(irHandler, args)
         terminated = False
@@ -572,6 +579,10 @@ if __name__ == "__main__":
             if terminated:
                 break
         print("Program Ended.")
+
+        end_time = time.time()
+        print('run time: ', end_time - start_time)
+
         print()
         print("Press ESCAPE to exit")
         turtle.listen()

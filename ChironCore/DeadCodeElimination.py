@@ -33,6 +33,7 @@ class DeadCodeElimination:
         2. Identify critical instructions (those with side effects)
         3. Mark live instructions via backward propagation
         4. Remove dead instructions
+        5. Remove empty loops
         
         Returns:
             The optimized CFG
@@ -50,8 +51,8 @@ class DeadCodeElimination:
         
         # Remove dead instructions
         removed_count = self._remove_dead_instructions()
-        
         print(f"Removed {removed_count} dead instructions")
+        
         print("\n===== DEAD CODE ELIMINATION COMPLETED =====")
         
         return self.cfg
@@ -327,3 +328,5 @@ class DeadCodeElimination:
             block.instrlist = new_instrlist
         
         return removed_count
+
+    
