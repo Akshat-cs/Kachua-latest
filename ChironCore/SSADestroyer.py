@@ -21,6 +21,67 @@ class SSADestroyer:
         
         # Store original variable names (before SSA)
         self.original_vars = set()
+        
+        # Add these fields for loop handling
+        self.back_edges = set()
+        self.loop_headers = set()
+
+    def _detect_loops(self):
+        """
+        Detect loops in the CFG and mark back edges
+        """
+        self.back_edges = set()
+        self.loop_headers = set()
+        self.loop_exits = set()
+        self.loops = {}  # Maps loop header -> set of blocks in the loop
+        
+        # Use DFS to find back edges
+        visited = set()
+        stack = []
+        
+        def dfs(node):
+            visited.add(node)
+            stack.append(node)
+            
+            for succ in self.cfg.successors(node):
+                if succ in stack:  # Back edge found
+                    self.back_edges.add((node, succ))
+                    self.loop_headers.add(succ)
+                    
+                    # Mark all nodes in the current stack that are part of this loop
+                    loop_start_idx = stack.index(succ)
+                    loop_nodes = set(stack[loop_start_idx:])
+                    
+                    # Store loop information
+                    if succ not in self.loops:
+                        self.loops[succ] = set()
+                    self.loops[succ].update(loop_nodes)
+                elif succ not in visited:
+                    dfs(succ)
+            
+            stack.pop()
+        
+        # Start DFS from entry block
+        entry_block = None
+        for block in self.cfg.nodes():
+            if block.name == "START" or self.cfg.in_degree(block) == 0:
+                entry_block = block
+                break
+        
+        if entry_block:
+            dfs(entry_block)
+        
+        # Identify loop exits - blocks that have successors outside the loop
+        for header, loop_blocks in self.loops.items():
+            for block in loop_blocks:
+                for succ in self.cfg.successors(block):
+                    if succ not in loop_blocks:
+                        self.loop_exits.add(block)
+                        break
+        
+        print(f"Detected {len(self.loop_headers)} loop headers and {len(self.back_edges)} back edges")
+        for header in self.loop_headers:
+            print(f"  Loop header: {header.name}")
     
     def convert_from_ssa(self):
         """
@@ -31,6 +92,9 @@ class SSADestroyer:
         4. Rename all variables back to their base names
         """
         print("\n===== SSA DESTRUCTION STARTED =====")
+    
+        # Detect loops in the CFG
+        self._detect_loops()
         
         # Identify original variables (those that exist before SSA conversion)
         self._identify_original_variables()
@@ -212,7 +276,7 @@ class SSADestroyer:
             target_var = phi.target_var.varname
             
             # For each source of the phi function
-            for source_var, pred_block in zip(phi.source_vars, phi.source_blocks):
+            for i, (source_var, pred_block) in enumerate(zip(phi.source_vars, phi.source_blocks)):
                 if not isinstance(source_var, ChironAST.Var):
                     continue
                 
@@ -228,13 +292,60 @@ class SSADestroyer:
                     ChironAST.Var(source_name)  # Keep the SSA name for now
                 )
                 
-                # Find the right position in the predecessor block
-                pos = len(pred_block.instrlist)
-                # Insert before any branch instruction
-                for j in range(len(pred_block.instrlist) - 1, -1, -1):
-                    if isinstance(pred_block.instrlist[j][0], ChironAST.ConditionCommand):
-                        pos = j
-                        break
+                # Check if this is a back edge (coming from a loop body)
+                is_back_edge = (pred_block, block) in self.back_edges
+                
+                # Check if this is a phi in a loop header
+                is_loop_header_phi = block in self.loop_headers
+                
+                # Check if this is a loop counter variable
+                is_loop_counter = ":__rep_counter_" in target_var
+                
+                if is_back_edge:
+                    print(f"Back edge copy operation: {source_name} -> {target_var} in {pred_block.name}")
+                    # Place copy at the end of the loop body, before any conditional branches
+                    pos = len(pred_block.instrlist)
+                    # Find last non-branch instruction
+                    for j in range(len(pred_block.instrlist) - 1, -1, -1):
+                        curr_instr = pred_block.instrlist[j][0]
+                        if not isinstance(curr_instr, ChironAST.ConditionCommand):
+                            pos = j + 1
+                            break
+                elif is_loop_header_phi and is_loop_counter:
+                    # For loop counters in loop headers, place initialization before the header
+                    print(f"Loop header counter initialization: {source_name} -> {target_var}")
+                    # Find appropriate location for initialization
+                    preds = list(self.cfg.predecessors(block))
+                    if preds:
+                        # Choose the predecessor that is not part of a back edge
+                        init_block = None
+                        for p in preds:
+                            if (p, block) not in self.back_edges:
+                                init_block = p
+                                break
+                        
+                        if init_block:
+                            pred_block = init_block
+                            pos = len(pred_block.instrlist)
+                            # Find the right position - before any branches
+                            for j in range(len(pred_block.instrlist) - 1, -1, -1):
+                                if isinstance(pred_block.instrlist[j][0], ChironAST.ConditionCommand):
+                                    pos = j
+                                    break
+                        else:
+                            # Fallback - place at start of the loop header
+                            pos = 0
+                    else:
+                        # Unusual case - no predecessors
+                        pos = 0
+                else:
+                    # Find the right position in the predecessor block (original logic)
+                    pos = len(pred_block.instrlist)
+                    # Insert before any branch instruction
+                    for j in range(len(pred_block.instrlist) - 1, -1, -1):
+                        if isinstance(pred_block.instrlist[j][0], ChironAST.ConditionCommand):
+                            pos = j
+                            break
                 
                 self.copy_operations.append((pred_block, pos, copy_op))
     
@@ -357,7 +468,7 @@ class SSADestroyer:
     
     def _remove_redundant_assignments(self):
         """
-        Remove redundant self-assignments like x = x
+        Remove redundant self-assignments like x = x and handle loop counter updates
         """
         removed_count = 0
         
@@ -378,6 +489,26 @@ class SSADestroyer:
                     print(f"Removing redundant assignment: {instr.lvar.varname} = {instr.rexpr.varname}")
                     removed_count += 1
                 else:
+                    # Special handling for loop counter decrements
+                    is_counter_decrement = False
+                    if (isinstance(instr, ChironAST.AssignmentCommand) and 
+                        hasattr(instr, 'lvar') and hasattr(instr, 'rexpr') and
+                        isinstance(instr.lvar, ChironAST.Var) and
+                        ":__rep_counter_" in instr.lvar.varname):
+                        
+                        # Fix the variable names to ensure consistency
+                        counter_base = self._get_base_name(instr.lvar.varname)
+                        instr.lvar.varname = counter_base
+                        
+                        # Check if this is a subtraction operation by examining the expression's class name
+                        if (hasattr(instr.rexpr, 'lexpr') and hasattr(instr.rexpr, 'rexpr') and
+                            instr.rexpr.__class__.__name__ in ['BinOpMinus', 'BinaryOp'] and
+                            isinstance(instr.rexpr.lexpr, ChironAST.Var) and
+                            ":__rep_counter_" in instr.rexpr.lexpr.varname):
+                            # Fix the counter name in the expression
+                            instr.rexpr.lexpr.varname = counter_base
+                            is_counter_decrement = True
+                    
                     # Keep this instruction
                     new_instrlist.append((instr, pc))
             

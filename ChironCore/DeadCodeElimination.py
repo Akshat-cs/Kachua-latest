@@ -26,6 +26,68 @@ class DeadCodeElimination:
         self.critical_instructions = set()  # Instructions with side effects or control flow
         self.live_instructions = set()      # Instructions that contribute to program output
         
+        # Add these fields for loop handling
+        self.back_edges = set()
+        self.loop_headers = set()
+
+    def _detect_loops(self):
+        """
+        Detect loops in the CFG and mark back edges
+        """
+        self.back_edges = set()
+        self.loop_headers = set()
+        self.loop_exits = set()
+        self.loops = {}  # Maps loop header -> set of blocks in the loop
+        
+        # Use DFS to find back edges
+        visited = set()
+        stack = []
+        
+        def dfs(node):
+            visited.add(node)
+            stack.append(node)
+            
+            for succ in self.cfg.successors(node):
+                if succ in stack:  # Back edge found
+                    self.back_edges.add((node, succ))
+                    self.loop_headers.add(succ)
+                    
+                    # Mark all nodes in the current stack that are part of this loop
+                    loop_start_idx = stack.index(succ)
+                    loop_nodes = set(stack[loop_start_idx:])
+                    
+                    # Store loop information
+                    if succ not in self.loops:
+                        self.loops[succ] = set()
+                    self.loops[succ].update(loop_nodes)
+                elif succ not in visited:
+                    dfs(succ)
+            
+            stack.pop()
+        
+        # Start DFS from entry block
+        entry_block = None
+        for block in self.cfg.nodes():
+            if block.name == "START" or self.cfg.in_degree(block) == 0:
+                entry_block = block
+                break
+        
+        if entry_block:
+            dfs(entry_block)
+        
+        # Identify loop exits - blocks that have successors outside the loop
+        for header, loop_blocks in self.loops.items():
+            for block in loop_blocks:
+                for succ in self.cfg.successors(block):
+                    if succ not in loop_blocks:
+                        self.loop_exits.add(block)
+                        break
+        
+        print(f"Detected {len(self.loop_headers)} loop headers and {len(self.back_edges)} back edges")
+        for header in self.loop_headers:
+            print(f"  Loop header: {header.name}")
+        print(f"Detected {len(self.loop_exits)} loop exits")
+        
     def eliminate_dead_code(self):
         """
         Main method to eliminate dead code from the CFG:
@@ -39,6 +101,9 @@ class DeadCodeElimination:
             The optimized CFG
         """
         print("\n===== DEAD CODE ELIMINATION STARTED =====")
+        
+        # Detect loops in the CFG
+        self._detect_loops()
         
         # Analyze variable definitions and uses
         self._analyze_variable_definitions_and_uses()
@@ -134,6 +199,29 @@ class DeadCodeElimination:
             self._find_variable_uses_in_expression(expr.rexpr, instr_loc)
         elif hasattr(expr, 'expr'):
             self._find_variable_uses_in_expression(expr.expr, instr_loc)
+
+    def _get_base_name(self, var_name):
+        """
+        Get the base name of a variable (without SSA suffix)
+        """
+        # Check if it's a string or an object with a varname attribute
+        if hasattr(var_name, 'varname'):
+            var_name = var_name.varname
+            
+        # Special case for loop counter variables
+        if ":__rep_counter_" in var_name:
+            # Extract the counter number but keep it as part of the base name
+            # E.g., ":__rep_counter_1_2" should become ":__rep_counter_1"
+            match = re.match(r'(:__rep_counter_\d+)(_\d+)?$', var_name)
+            if match:
+                return match.group(1)  # Return with counter number intact
+        
+        # Regular SSA variables
+        match = re.match(r'(.+)_\d+$', var_name)
+        if match:
+            return match.group(1)
+        
+        return var_name
     
     def _identify_critical_instructions(self):
         """
@@ -142,8 +230,11 @@ class DeadCodeElimination:
         """
         print("Identifying critical instructions...")
         
-        # First, find all variables referenced in conditions
-        control_vars = set()
+        # First, find all variables referenced in conditions and loop bodies
+        critical_vars = set()
+        loop_vars = set()
+        
+        # Step 1: Find all variables used in conditions
         for block in self.cfg.nodes():
             if not hasattr(block, 'instrlist'):
                 continue
@@ -153,7 +244,25 @@ class DeadCodeElimination:
                     # Extract all variables from condition string representation
                     cond_str = str(instr)
                     for var_match in re.findall(r'(:[\w_]+)', cond_str):
-                        control_vars.add(var_match)
+                        critical_vars.add(self._get_base_name(var_match))
+        
+        # Step 2: Find all variables used in loops
+        for header, loop_blocks in self.loops.items():
+            for block in loop_blocks:
+                if not hasattr(block, 'instrlist'):
+                    continue
+                    
+                for instr_idx, (instr, _) in enumerate(block.instrlist):
+                    # Find variables used in any instruction in the loop
+                    used_vars = self._get_variables_used_in_instruction(instr)
+                    for var in used_vars:
+                        base_var = self._get_base_name(var)
+                        loop_vars.add(base_var)
+                    
+                    # Also find variables defined in the loop
+                    if (hasattr(instr, 'lvar') and isinstance(instr.lvar, ChironAST.Var)):
+                        base_var = self._get_base_name(instr.lvar.varname)
+                        loop_vars.add(base_var)
         
         # Now identify critical instructions
         for block in self.cfg.nodes():
@@ -166,19 +275,40 @@ class DeadCodeElimination:
                 # Control flow instructions are critical
                 if isinstance(instr, ChironAST.ConditionCommand):
                     self.critical_instructions.add(instr_loc)
+                    print(f"  Critical instruction (control flow): {instr}")
                 
                 # Side effect instructions are critical
                 if (isinstance(instr, ChironAST.MoveCommand) or 
                     isinstance(instr, ChironAST.PenCommand) or 
                     isinstance(instr, ChironAST.GotoCommand)):
                     self.critical_instructions.add(instr_loc)
+                    print(f"  Critical instruction (side effect): {instr}")
                     
                 # Variable definitions used in control flow are critical
                 if (isinstance(instr, ChironAST.AssignmentCommand) and 
                     hasattr(instr, 'lvar') and 
-                    str(instr.lvar) in control_vars):
+                    self._get_base_name(str(instr.lvar)) in critical_vars):
                     print(f"  Critical instruction (used in control flow): {instr}")
                     self.critical_instructions.add(instr_loc)
+                    
+                # Variable initializations that are used in loops are critical
+                if (isinstance(instr, ChironAST.AssignmentCommand) and 
+                    hasattr(instr, 'lvar')):
+                    base_var = self._get_base_name(instr.lvar.varname)
+                    
+                    # Check if this is the first definition of a variable used in a loop
+                    if base_var in loop_vars:
+                        # If we are not in a loop and this defines a loop variable, 
+                        # it's likely an initialization
+                        is_in_loop = False
+                        for header, loop_blocks in self.loops.items():
+                            if block in loop_blocks:
+                                is_in_loop = True
+                                break
+                        
+                        if not is_in_loop:
+                            print(f"  Critical instruction (loop variable initialization): {instr}")
+                            self.critical_instructions.add(instr_loc)
                     
                 # Loop counter initializations are ALWAYS critical
                 if (isinstance(instr, ChironAST.AssignmentCommand) and 
@@ -186,6 +316,62 @@ class DeadCodeElimination:
                     ":__rep_counter_" in str(instr.lvar)):
                     print(f"  Critical instruction (loop counter): {instr}")
                     self.critical_instructions.add(instr_loc)
+                    
+                # Any instruction in a loop header is critical
+                if block in self.loop_headers:
+                    print(f"  Critical instruction (in loop header): {instr}")
+                    self.critical_instructions.add(instr_loc)
+                
+                # Any instruction that modifies a variable used across loop iterations is critical
+                if isinstance(instr, ChironAST.AssignmentCommand) and hasattr(instr, 'lvar'):
+                    var_name = str(instr.lvar)
+                    # Check if this variable is used in any loop
+                    for header, loop_blocks in self.loops.items():
+                        if block in loop_blocks:
+                            # This is a loop-carried variable if it's used after being defined
+                            for loop_block in loop_blocks:
+                                for loop_instr_idx, (loop_instr, _) in enumerate(loop_block.instrlist):
+                                    # Skip the current instruction
+                                    if loop_block == block and loop_instr_idx == instr_idx:
+                                        continue
+                                        
+                                    # Check if the variable is used in this instruction
+                                    used_vars = self._get_variables_used_in_instruction(loop_instr)
+                                    if self._get_base_name(var_name) in [self._get_base_name(v) for v in used_vars]:
+                                        print(f"  Critical instruction (loop-carried variable): {instr}")
+                                        self.critical_instructions.add(instr_loc)
+                                        break
+                                # Break the inner loop if we already marked this instruction as critical
+                                if instr_loc in self.critical_instructions:
+                                    break
+                        # Break the loop if we already marked this instruction as critical
+                        if instr_loc in self.critical_instructions:
+                            break
+        
+        # Mark loop-critical instructions
+        for block in self.cfg.nodes():
+            # Mark all phi instructions in loop headers as critical
+            if block in self.loop_headers and hasattr(block, 'instrlist'):
+                for instr_idx, (instr, _) in enumerate(block.instrlist):
+                    if isinstance(instr, ChironAST.PhiInstruction):
+                        self.critical_instructions.add((block, instr_idx))
+                        print(f"  Critical instruction (loop phi): {instr}")
+            
+            # Mark loop back edge conditions as critical
+            for succ in self.cfg.successors(block):
+                if (block, succ) in self.back_edges and hasattr(block, 'instrlist'):
+                    for instr_idx, (instr, _) in enumerate(block.instrlist):
+                        if isinstance(instr, ChironAST.ConditionCommand):
+                            self.critical_instructions.add((block, instr_idx))
+                            print(f"  Critical instruction (loop back edge): {instr}")
+        
+        # Mark all instructions in loop exits as critical
+        for exit_block in self.loop_exits:
+            if hasattr(exit_block, 'instrlist'):
+                for instr_idx, (instr, _) in enumerate(exit_block.instrlist):
+                    if isinstance(instr, ChironAST.ConditionCommand):
+                        self.critical_instructions.add((exit_block, instr_idx))
+                        print(f"  Critical instruction (loop exit): {instr}")
     
     def _mark_live_instructions(self):
         """
@@ -307,10 +493,29 @@ class DeadCodeElimination:
                     
                     # Keep phi functions for now (they'll be handled by SSA destruction)
                     if isinstance(instr, ChironAST.PhiInstruction):
-                        new_instrlist.append((instr, line_num))
-                        continue
+                        # In loop headers, keep all phi functions
+                        if block in self.loop_headers:
+                            new_instrlist.append((instr, line_num))
+                            continue
+                        
+                        # For other blocks, check if any source is from a loop
+                        has_loop_source = False
+                        for source_block in instr.source_blocks:
+                            for header, loop_blocks in self.loops.items():
+                                if source_block in loop_blocks:
+                                    has_loop_source = True
+                                    break
+                            if has_loop_source:
+                                break
+                        
+                        if has_loop_source:
+                            new_instrlist.append((instr, line_num))
+                            continue
+                        else:
+                            new_instrlist.append((instr, line_num))
+                            continue
                     
-                    # Don't remove instructions with side effects
+                    # Don't remove instructions with side effects or in loops
                     if (isinstance(instr, ChironAST.MoveCommand) or 
                         isinstance(instr, ChironAST.PenCommand) or 
                         isinstance(instr, ChironAST.GotoCommand) or
@@ -318,7 +523,19 @@ class DeadCodeElimination:
                         new_instrlist.append((instr, line_num))
                         continue
                     
-                    # For other instructions, replace with NOP
+                    # Don't remove instructions related to loop counters
+                    if (hasattr(instr, 'lvar') and 
+                        isinstance(instr.lvar, ChironAST.Var) and 
+                        ":__rep_counter_" in instr.lvar.varname):
+                        new_instrlist.append((instr, line_num))
+                        continue
+                    
+                    # Don't remove instructions in loop headers or exits
+                    if block in self.loop_headers or block in self.loop_exits:
+                        new_instrlist.append((instr, line_num))
+                        continue
+                    
+                    # For all remaining safe-to-remove instructions, replace with NOP
                     if can_remove:
                         new_instrlist.append((ChironAST.NoOpCommand(), line_num))
                         removed_count += 1
@@ -328,5 +545,3 @@ class DeadCodeElimination:
             block.instrlist = new_instrlist
         
         return removed_count
-
-    

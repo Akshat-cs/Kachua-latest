@@ -1,0 +1,928 @@
+Chiron v5.3
+
+    ░█████╗░██╗░░██╗██╗██████╗░░█████╗░███╗░░██╗
+    ██╔══██╗██║░░██║██║██╔══██╗██╔══██╗████╗░██║
+    ██║░░╚═╝███████║██║██████╔╝██║░░██║██╔██╗██║
+    ██║░░██╗██╔══██║██║██╔══██╗██║░░██║██║╚████║
+    ╚█████╔╝██║░░██║██║██║░░██║╚█████╔╝██║░╚███║
+    ░╚════╝░╚═╝░░╚═╝╚═╝╚═╝░░╚═╝░╚════╝░╚═╝░░╚══╝
+    
+:x = 5
+:unusedvar = 10 
+:total = 0
+:z =0
+
+:y = 5
+:sum = 0
+
+repeat :x [
+    :total = :total + 1  
+    :z = :z + 1
+    repeat :y [
+    :sum = :sum + 1  
+    :z = :z + 1
+    ]
+]
+
+forward :total
+
+===== Starting Dead Code Elimination =====
+
+========== IR BEFORE SSA CONVERSION ==========
+
+
+========== Chiron IR ==========
+
+The first label before the opcode name represents the IR index or label 
+on the control flow graph for that node.
+
+The number after the opcode name represents the jump offset 
+relative to that statement.
+
+ [L0] :x = 5 [1]
+ [L1] :unusedvar = 10 [1]
+ [L2] :total = 0 [1]
+ [L3] :z = 0 [1]
+ [L4] :y = 5 [1]
+ [L5] :sum = 0 [1]
+ [L6] :__rep_counter_1 = :x [1]
+ [L7] (:__rep_counter_1 > 0) [11]
+ [L8] :total = (:total + 1) [1]
+ [L9] :z = (:z + 1) [1]
+[L10] :__rep_counter_2 = :y [1]
+[L11] (:__rep_counter_2 > 0) [5]
+[L12] :sum = (:sum + 1) [1]
+[L13] :z = (:z + 1) [1]
+[L14] :__rep_counter_2 = (:__rep_counter_2 - 1) [1]
+[L15] False [-4]
+[L16] :__rep_counter_1 = (:__rep_counter_1 - 1) [1]
+[L17] False [-10]
+[L18] forward :total [1]
+CFG before SSA conversion dumped to control_flow_graph.png
+
+===== Converting to SSA Form =====
+
+===== SSA CONVERSION STARTED =====
+
+===== FINDING ALL VARIABLES =====
+Found 8 variables:
+  :__rep_counter_1 - defined in 2 blocks
+  :__rep_counter_2 - defined in 2 blocks
+  :sum - defined in 2 blocks
+  :total - defined in 2 blocks
+  :unusedvar - defined in 1 blocks
+  :x - defined in 1 blocks
+  :y - defined in 1 blocks
+  :z - defined in 3 blocks
+
+===== COMPUTING DOMINANCE INFORMATION =====
+Entry block: START
+Successfully computed immediate dominators
+Added 7 as child of START in dominator tree
+Added 18 as child of 7 in dominator tree
+Added END as child of 18 in dominator tree
+Added 8 as child of 7 in dominator tree
+Added 11 as child of 8 in dominator tree
+Added 16 as child of 11 in dominator tree
+Added 12 as child of 11 in dominator tree
+
+===== DOMINANCE FRONTIERS =====
+DF(11) = {11, 7}
+DF(12) = {11}
+DF(16) = {7}
+DF(18) = {}
+DF(7) = {}
+DF(8) = {7}
+DF(END) = {}
+DF(START) = {}
+Successfully computed dominance frontiers
+
+===== PLACING PHI FUNCTIONS =====
+Processing variable: :__rep_counter_1
+  Placing phi function for :__rep_counter_1 in block 7
+Processing variable: :__rep_counter_2
+  Placing phi function for :__rep_counter_2 in block 7
+  Placing phi function for :__rep_counter_2 in block 11
+Processing variable: :sum
+  Placing phi function for :sum in block 7
+  Placing phi function for :sum in block 11
+Processing variable: :total
+  Placing phi function for :total in block 7
+Processing variable: :unusedvar
+Processing variable: :x
+Processing variable: :y
+Processing variable: :z
+  Placing phi function for :z in block 7
+  Placing phi function for :z in block 11
+
+===== RENAMING VARIABLES =====
+[Entry Found] Entry block set to: START
+
+[Block] Renaming variables in block: START
+
+[Block] Renaming variables in block: 7
+
+[Block] Renaming variables in block: 8
+
+[Block] Renaming variables in block: 11
+
+[Block] Renaming variables in block: 12
+[Restore] Restoring variable_stacks after block 12
+
+[Block] Renaming variables in block: 16
+[Restore] Restoring variable_stacks after block 16
+[Restore] Restoring variable_stacks after block 11
+[Restore] Restoring variable_stacks after block 8
+
+[Block] Renaming variables in block: 18
+
+[Block] Renaming variables in block: END
+[Restore] Restoring variable_stacks after block END
+[Restore] Restoring variable_stacks after block 18
+[Restore] Restoring variable_stacks after block 7
+[Restore] Restoring variable_stacks after block START
+
+===== SSA CONVERSION COMPLETED =====
+Reassigning line numbers in CFG...
+Reassigned 27 line numbers
+
+========== IR AFTER SSA CONVERSION ==========
+
+
+========== Chiron IR ==========
+
+The first label before the opcode name represents the IR index or label 
+on the control flow graph for that node.
+
+The number after the opcode name represents the jump offset 
+relative to that statement.
+
+ [L0] :x_1 = 5 [1]
+ [L1] :unusedvar_1 = 10 [1]
+ [L2] :total_1 = 0 [1]
+ [L3] :z_1 = 0 [1]
+ [L4] :y_1 = 5 [1]
+ [L5] :sum_1 = 0 [1]
+ [L6] :__rep_counter_1_1 = :x_1 [1]
+ [L7] :z_2 = φ(:z_1, :z_4) [1]
+ [L8] :total_2 = φ(:total_1, :total_3) [1]
+ [L9] :sum_2 = φ(:sum_1, :sum_3) [1]
+[L10] :__rep_counter_2_1 = φ(:__rep_counter_2_0, :__rep_counter_2_3) [1]
+[L11] :__rep_counter_1_2 = φ(:__rep_counter_1_1, :__rep_counter_1_3) [1]
+[L12] (:__rep_counter_1_2 > 0) [14]
+[L13] :total_3 = (:total_2 + 1) [1]
+[L14] :z_3 = (:z_2 + 1) [1]
+[L15] :__rep_counter_2_2 = :y_1 [1]
+[L16] :z_4 = φ(:z_3, :z_5) [1]
+[L17] :sum_3 = φ(:sum_2, :sum_4) [1]
+[L18] :__rep_counter_2_3 = φ(:__rep_counter_2_2, :__rep_counter_2_4) [1]
+[L19] (:__rep_counter_2_3 > 0) [5]
+[L20] :sum_4 = (:sum_3 + 1) [1]
+[L21] :z_5 = (:z_4 + 1) [1]
+[L22] :__rep_counter_2_4 = (:__rep_counter_2_3 - 1) [1]
+[L23] False [-7]
+[L24] :__rep_counter_1_3 = (:__rep_counter_1_2 - 1) [1]
+[L25] False [-18]
+[L26] forward :total_2 [1]
+CFG after SSA conversion dumped to ssa_form_cfg.png
+
+===== DEAD CODE ELIMINATION STARTED =====
+Detected 2 loop headers and 2 back edges
+  Loop header: 7
+  Loop header: 11
+Detected 2 loop exits
+Analyzing variable definitions and uses...
+Found 22 variable definitions and 27 variable uses
+Identifying critical instructions...
+  Critical instruction (loop variable initialization): :total_1 = 0
+  Critical instruction (loop variable initialization): :z_1 = 0
+  Critical instruction (loop variable initialization): :y_1 = 5
+  Critical instruction (loop variable initialization): :sum_1 = 0
+  Critical instruction (used in control flow): :__rep_counter_1_1 = :x_1
+  Critical instruction (loop variable initialization): :__rep_counter_1_1 = :x_1
+  Critical instruction (loop counter): :__rep_counter_1_1 = :x_1
+  Critical instruction (loop-carried variable): :total_3 = (:total_2 + 1)
+  Critical instruction (loop-carried variable): :z_3 = (:z_2 + 1)
+  Critical instruction (used in control flow): :__rep_counter_2_2 = :y_1
+  Critical instruction (loop counter): :__rep_counter_2_2 = :y_1
+  Critical instruction (side effect): forward :total_2
+  Critical instruction (loop-carried variable): :sum_4 = (:sum_3 + 1)
+  Critical instruction (loop-carried variable): :z_5 = (:z_4 + 1)
+  Critical instruction (used in control flow): :__rep_counter_2_4 = (:__rep_counter_2_3 - 1)
+  Critical instruction (loop counter): :__rep_counter_2_4 = (:__rep_counter_2_3 - 1)
+  Critical instruction (control flow): False
+  Critical instruction (used in control flow): :__rep_counter_1_3 = (:__rep_counter_1_2 - 1)
+  Critical instruction (loop counter): :__rep_counter_1_3 = (:__rep_counter_1_2 - 1)
+  Critical instruction (control flow): False
+  Critical instruction (in loop header): :z_4 = φ(:z_3, :z_5)
+  Critical instruction (in loop header): :sum_3 = φ(:sum_2, :sum_4)
+  Critical instruction (in loop header): :__rep_counter_2_3 = φ(:__rep_counter_2_2, :__rep_counter_2_4)
+  Critical instruction (control flow): (:__rep_counter_2_3 > 0)
+  Critical instruction (in loop header): (:__rep_counter_2_3 > 0)
+  Critical instruction (in loop header): :z_2 = φ(:z_1, :z_4)
+  Critical instruction (in loop header): :total_2 = φ(:total_1, :total_3)
+  Critical instruction (in loop header): :sum_2 = φ(:sum_1, :sum_3)
+  Critical instruction (in loop header): :__rep_counter_2_1 = φ(:__rep_counter_2_0, :__rep_counter_2_3)
+  Critical instruction (in loop header): :__rep_counter_1_2 = φ(:__rep_counter_1_1, :__rep_counter_1_3)
+  Critical instruction (control flow): (:__rep_counter_1_2 > 0)
+  Critical instruction (in loop header): (:__rep_counter_1_2 > 0)
+  Critical instruction (loop back edge): False
+  Critical instruction (loop back edge): False
+  Critical instruction (loop phi): :z_4 = φ(:z_3, :z_5)
+  Critical instruction (loop phi): :sum_3 = φ(:sum_2, :sum_4)
+  Critical instruction (loop phi): :__rep_counter_2_3 = φ(:__rep_counter_2_2, :__rep_counter_2_4)
+  Critical instruction (loop phi): :z_2 = φ(:z_1, :z_4)
+  Critical instruction (loop phi): :total_2 = φ(:total_1, :total_3)
+  Critical instruction (loop phi): :sum_2 = φ(:sum_1, :sum_3)
+  Critical instruction (loop phi): :__rep_counter_2_1 = φ(:__rep_counter_2_0, :__rep_counter_2_3)
+  Critical instruction (loop phi): :__rep_counter_1_2 = φ(:__rep_counter_1_1, :__rep_counter_1_3)
+  Critical instruction (loop exit): (:__rep_counter_1_2 > 0)
+  Critical instruction (loop exit): (:__rep_counter_2_3 > 0)
+Marking live instructions...
+Marked 26 instructions as live
+Removing dead instructions...
+  Removed dead instruction at block START, index 1: :unusedvar_1 = 10
+Removed 1 dead instructions
+
+===== DEAD CODE ELIMINATION COMPLETED =====
+Reassigning line numbers in CFG...
+Reassigned 27 line numbers
+
+========== IR AFTER DEAD CODE ELIMINATION ==========
+
+
+========== Chiron IR ==========
+
+The first label before the opcode name represents the IR index or label 
+on the control flow graph for that node.
+
+The number after the opcode name represents the jump offset 
+relative to that statement.
+
+ [L0] :x_1 = 5 [1]
+ [L1] NOP [1]
+ [L2] :total_1 = 0 [1]
+ [L3] :z_1 = 0 [1]
+ [L4] :y_1 = 5 [1]
+ [L5] :sum_1 = 0 [1]
+ [L6] :__rep_counter_1_1 = :x_1 [1]
+ [L7] :z_2 = φ(:z_1, :z_4) [1]
+ [L8] :total_2 = φ(:total_1, :total_3) [1]
+ [L9] :sum_2 = φ(:sum_1, :sum_3) [1]
+[L10] :__rep_counter_2_1 = φ(:__rep_counter_2_0, :__rep_counter_2_3) [1]
+[L11] :__rep_counter_1_2 = φ(:__rep_counter_1_1, :__rep_counter_1_3) [1]
+[L12] (:__rep_counter_1_2 > 0) [14]
+[L13] :total_3 = (:total_2 + 1) [1]
+[L14] :z_3 = (:z_2 + 1) [1]
+[L15] :__rep_counter_2_2 = :y_1 [1]
+[L16] :z_4 = φ(:z_3, :z_5) [1]
+[L17] :sum_3 = φ(:sum_2, :sum_4) [1]
+[L18] :__rep_counter_2_3 = φ(:__rep_counter_2_2, :__rep_counter_2_4) [1]
+[L19] (:__rep_counter_2_3 > 0) [5]
+[L20] :sum_4 = (:sum_3 + 1) [1]
+[L21] :z_5 = (:z_4 + 1) [1]
+[L22] :__rep_counter_2_4 = (:__rep_counter_2_3 - 1) [1]
+[L23] False [-7]
+[L24] :__rep_counter_1_3 = (:__rep_counter_1_2 - 1) [1]
+[L25] False [-18]
+[L26] forward :total_2 [1]
+CFG after dead code elimination dumped to after_dce_cfg.png
+
+===== Converting back from SSA Form =====
+
+===== SSA DESTRUCTION STARTED =====
+Detected 2 loop headers and 2 back edges
+  Loop header: 7
+  Loop header: 11
+Back edge copy operation: :z_5 -> :z_4 in 12
+Back edge copy operation: :sum_4 -> :sum_3 in 12
+Loop header counter initialization: :__rep_counter_2_2 -> :__rep_counter_2_3
+Back edge copy operation: :__rep_counter_2_4 -> :__rep_counter_2_3 in 12
+Back edge copy operation: :z_4 -> :z_2 in 16
+Back edge copy operation: :total_3 -> :total_2 in 16
+Back edge copy operation: :sum_3 -> :sum_2 in 16
+Loop header counter initialization: :__rep_counter_2_0 -> :__rep_counter_2_1
+Back edge copy operation: :__rep_counter_2_3 -> :__rep_counter_2_1 in 16
+Loop header counter initialization: :__rep_counter_1_1 -> :__rep_counter_1_2
+Back edge copy operation: :__rep_counter_1_3 -> :__rep_counter_1_2 in 16
+Replaced 8 phi functions with copy operations
+Renamed: :x_1 -> :x
+Renamed: :total_1 -> :total
+Renamed: :z_1 -> :z
+Renamed: :y_1 -> :y
+Renamed: :sum_1 -> :sum
+Renamed: :__rep_counter_1_1 -> :__rep_counter_1
+Renamed: :x_1 -> :x
+Renamed: :z_2 -> :z
+Renamed: :z_1 -> :z
+Renamed: :total_2 -> :total
+Renamed: :total_1 -> :total
+Renamed: :sum_2 -> :sum
+Renamed: :sum_1 -> :sum
+Renamed: :__rep_counter_2_1 -> :__rep_counter_2
+Renamed: :__rep_counter_2_0 -> :__rep_counter_2
+Renamed: :__rep_counter_1_2 -> :__rep_counter_1
+Renamed: :__rep_counter_1_1 -> :__rep_counter_1
+Renamed: :total_3 -> :total
+Renamed: :total_2 -> :total
+Renamed: :z_3 -> :z
+Renamed: :z_2 -> :z
+Renamed: :__rep_counter_2_2 -> :__rep_counter_2
+Renamed: :y_1 -> :y
+Renamed: :z_4 -> :z
+Renamed: :z_3 -> :z
+Renamed: :sum_3 -> :sum
+Renamed: :sum_2 -> :sum
+Renamed: :__rep_counter_2_3 -> :__rep_counter_2
+Renamed: :__rep_counter_2_2 -> :__rep_counter_2
+Renamed: :total_2 -> :total
+Renamed: :sum_4 -> :sum
+Renamed: :sum_3 -> :sum
+Renamed: :z_5 -> :z
+Renamed: :z_4 -> :z
+Renamed: :__rep_counter_2_4 -> :__rep_counter_2
+Renamed: :__rep_counter_2_3 -> :__rep_counter_2
+Renamed: :z_4 -> :z
+Renamed: :z_5 -> :z
+Renamed: :sum_3 -> :sum
+Renamed: :sum_4 -> :sum
+Renamed: :__rep_counter_2_3 -> :__rep_counter_2
+Renamed: :__rep_counter_2_4 -> :__rep_counter_2
+Renamed: :__rep_counter_1_3 -> :__rep_counter_1
+Renamed: :__rep_counter_1_2 -> :__rep_counter_1
+Renamed: :z_2 -> :z
+Renamed: :z_4 -> :z
+Renamed: :total_2 -> :total
+Renamed: :total_3 -> :total
+Renamed: :sum_2 -> :sum
+Renamed: :sum_3 -> :sum
+Renamed: :__rep_counter_2_1 -> :__rep_counter_2
+Renamed: :__rep_counter_2_3 -> :__rep_counter_2
+Renamed: :__rep_counter_1_2 -> :__rep_counter_1
+Renamed: :__rep_counter_1_3 -> :__rep_counter_1
+Removed SSA suffixes from 54 variables
+Removing redundant assignment: :z = :z
+Removing redundant assignment: :total = :total
+Removing redundant assignment: :sum = :sum
+Removing redundant assignment: :__rep_counter_2 = :__rep_counter_2
+Removing redundant assignment: :__rep_counter_1 = :__rep_counter_1
+Removing redundant assignment: :z = :z
+Removing redundant assignment: :sum = :sum
+Removing redundant assignment: :__rep_counter_2 = :__rep_counter_2
+Removing redundant assignment: :z = :z
+Removing redundant assignment: :sum = :sum
+Removing redundant assignment: :__rep_counter_2 = :__rep_counter_2
+Removing redundant assignment: :z = :z
+Removing redundant assignment: :total = :total
+Removing redundant assignment: :sum = :sum
+Removing redundant assignment: :__rep_counter_2 = :__rep_counter_2
+Removing redundant assignment: :__rep_counter_1 = :__rep_counter_1
+Removed 16 redundant self-assignments
+
+===== SSA DESTRUCTION COMPLETED =====
+Reassigning line numbers in CFG...
+Reassigned 19 line numbers
+
+========== IR AFTER SSA DESTRUCTION ==========
+
+
+========== Chiron IR ==========
+
+The first label before the opcode name represents the IR index or label 
+on the control flow graph for that node.
+
+The number after the opcode name represents the jump offset 
+relative to that statement.
+
+ [L0] :x = 5 [1]
+ [L1] NOP [1]
+ [L2] :total = 0 [1]
+ [L3] :z = 0 [1]
+ [L4] :y = 5 [1]
+ [L5] :sum = 0 [1]
+ [L6] :__rep_counter_1 = :x [1]
+ [L7] (:__rep_counter_1 > 0) [11]
+ [L8] :total = (:total + 1) [1]
+ [L9] :z = (:z + 1) [1]
+[L10] :__rep_counter_2 = :y [1]
+[L11] (:__rep_counter_2 > 0) [5]
+[L12] :sum = (:sum + 1) [1]
+[L13] :z = (:z + 1) [1]
+[L14] :__rep_counter_2 = (:__rep_counter_2 - 1) [1]
+[L15] False [-4]
+[L16] :__rep_counter_1 = (:__rep_counter_1 - 1) [1]
+[L17] False [-10]
+[L18] forward :total [1]
+CFG after SSA destruction dumped to final_cfg.png
+dce time:  1.1531341075897217
+Program counter :  0
+:x = 5 AssignmentCommand 1
+  Assignment Statement
+Program counter :  1
+NOP NoOpCommand 1
+  No-Op Command
+Program counter :  2
+:total = 0 AssignmentCommand 1
+  Assignment Statement
+Program counter :  3
+:z = 0 AssignmentCommand 1
+  Assignment Statement
+Program counter :  4
+:y = 5 AssignmentCommand 1
+  Assignment Statement
+Program counter :  5
+:sum = 0 AssignmentCommand 1
+  Assignment Statement
+Program counter :  6
+:__rep_counter_1 = :x AssignmentCommand 1
+  Assignment Statement
+Program counter :  7
+(:__rep_counter_1 > 0) ConditionCommand 11
+  Branch Instruction
+Program counter :  8
+:total = (:total + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  9
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  10
+:__rep_counter_2 = :y AssignmentCommand 1
+  Assignment Statement
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  16
+:__rep_counter_1 = (:__rep_counter_1 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  17
+False ConditionCommand -10
+  Branch Instruction
+Program counter :  7
+(:__rep_counter_1 > 0) ConditionCommand 11
+  Branch Instruction
+Program counter :  8
+:total = (:total + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  9
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  10
+:__rep_counter_2 = :y AssignmentCommand 1
+  Assignment Statement
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  16
+:__rep_counter_1 = (:__rep_counter_1 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  17
+False ConditionCommand -10
+  Branch Instruction
+Program counter :  7
+(:__rep_counter_1 > 0) ConditionCommand 11
+  Branch Instruction
+Program counter :  8
+:total = (:total + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  9
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  10
+:__rep_counter_2 = :y AssignmentCommand 1
+  Assignment Statement
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  16
+:__rep_counter_1 = (:__rep_counter_1 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  17
+False ConditionCommand -10
+  Branch Instruction
+Program counter :  7
+(:__rep_counter_1 > 0) ConditionCommand 11
+  Branch Instruction
+Program counter :  8
+:total = (:total + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  9
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  10
+:__rep_counter_2 = :y AssignmentCommand 1
+  Assignment Statement
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  16
+:__rep_counter_1 = (:__rep_counter_1 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  17
+False ConditionCommand -10
+  Branch Instruction
+Program counter :  7
+(:__rep_counter_1 > 0) ConditionCommand 11
+  Branch Instruction
+Program counter :  8
+:total = (:total + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  9
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  10
+:__rep_counter_2 = :y AssignmentCommand 1
+  Assignment Statement
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  12
+:sum = (:sum + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  13
+:z = (:z + 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  14
+:__rep_counter_2 = (:__rep_counter_2 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  15
+False ConditionCommand -4
+  Branch Instruction
+Program counter :  11
+(:__rep_counter_2 > 0) ConditionCommand 5
+  Branch Instruction
+Program counter :  16
+:__rep_counter_1 = (:__rep_counter_1 - 1) AssignmentCommand 1
+  Assignment Statement
+Program counter :  17
+False ConditionCommand -10
+  Branch Instruction
+Program counter :  7
+(:__rep_counter_1 > 0) ConditionCommand 11
+  Branch Instruction
+Program counter :  18
+forward :total MoveCommand 1
+  MoveCommand
+Program Ended.
+run time:  0.3776850700378418
+
+Press ESCAPE to exit
